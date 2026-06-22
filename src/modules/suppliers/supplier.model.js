@@ -64,6 +64,10 @@ const supplierSchema = new mongoose.Schema({
   },
   stripeCustomerId: {
     type: String
+  },
+  isFeatured: {
+    type: Boolean,
+    default: false
   }
 }, { timestamps: true });
 

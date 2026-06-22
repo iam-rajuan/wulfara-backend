@@ -25,6 +25,10 @@ exports.protect = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Not authorized, user no longer exists' });
     }
 
+    if (req.user.isActive === false) {
+      return res.status(403).json({ success: false, message: 'Your account has been suspended. Please contact support.' });
+    }
+
     next();
   } catch (err) {
     console.error('Token Verification Failed:', err.message);

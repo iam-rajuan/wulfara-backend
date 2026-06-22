@@ -17,8 +17,10 @@ exports.getSuppliers = async (req, res) => {
     // Loop over removeFields and delete them from reqQuery
     removeFields.forEach(param => delete reqQuery[param]);
 
-    // Temporarily disabled so you can easily find your new profile's ID in Postman!
-    // reqQuery.isApproved = true;
+    // Only show approved suppliers to public, unless admin is requesting
+    if (!req.user || req.user.role !== 'admin') {
+      reqQuery.isApproved = true;
+    }
 
     query = Supplier.find(reqQuery).populate({
       path: 'categories',
@@ -156,6 +158,88 @@ exports.getUploadUrl = async (req, res) => {
     const urlData = await generatePresignedUrl(`suppliers/${req.user.id}/${folder}`, contentType);
 
     res.status(200).json({ success: true, data: urlData });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const Rfq = require('../rfqs/rfq.model');
+
+// @desc    Get dashboard analytics for the logged-in supplier
+// @route   GET /api/v1/suppliers/dashboard
+// @access  Private (Supplier only)
+exports.getSupplierDashboard = async (req, res) => {
+  try {
+    const supplierProfile = await Supplier.findOne({ user: req.user.id });
+    
+    if (!supplierProfile) {
+      return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+    }
+
+    // Aggregate stats
+    const totalRfqs = await Rfq.countDocuments({ supplier: supplierProfile._id });
+    const pendingRfqs = await Rfq.countDocuments({ supplier: supplierProfile._id, status: 'pending' });
+
+    // Profile completion calculation (basic)
+    let completedFields = 0;
+    const totalFields = 6;
+    
+    if (supplierProfile.companyName) completedFields++;
+    if (supplierProfile.description) completedFields++;
+    if (supplierProfile.contactEmail) completedFields++;
+    if (supplierProfile.contactPhone) completedFields++;
+    if (supplierProfile.logo && supplierProfile.logo !== 'no-logo.jpg') completedFields++;
+    if (supplierProfile.categories && supplierProfile.categories.length > 0) completedFields++;
+
+    const profileCompletionPercentage = Math.round((completedFields / totalFields) * 100);
+
+    const dashboardData = {
+      totalRfqs,
+      pendingRfqs,
+      profileCompletion: `${profileCompletionPercentage}%`,
+      subscriptionPlan: supplierProfile.subscriptionPlan,
+      isApproved: supplierProfile.isApproved
+    };
+
+    res.status(200).json({ success: true, data: dashboardData });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Approve or Reject a supplier listing
+// @route   PUT /api/v1/suppliers/:id/approve
+// @access  Private (Admin only)
+exports.approveSupplier = async (req, res) => {
+  try {
+    const supplier = await Supplier.findById(req.params.id);
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier not found' });
+    }
+    
+    supplier.isApproved = req.body.isApproved;
+    await supplier.save();
+
+    res.status(200).json({ success: true, data: supplier });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Feature a supplier listing
+// @route   PUT /api/v1/suppliers/:id/feature
+// @access  Private (Admin only)
+exports.featureSupplier = async (req, res) => {
+  try {
+    const supplier = await Supplier.findById(req.params.id);
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier not found' });
+    }
+    
+    supplier.isFeatured = req.body.isFeatured;
+    await supplier.save();
+
+    res.status(200).json({ success: true, data: supplier });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -1,4 +1,5 @@
 const Supplier = require('../suppliers/supplier.model');
+const Payment = require('./payment.model');
 
 // @desc    Simulate creating a Stripe Checkout Session
 // @route   POST /api/v1/subscriptions/checkout-session
@@ -54,10 +55,82 @@ exports.simulateWebhook = async (req, res) => {
 
     await supplierProfile.save();
 
+    // Create a dummy payment record (invoice)
+    await Payment.create({
+      supplier: supplierProfile._id,
+      amount: 49.99, // dummy premium price
+      status: 'paid',
+      invoiceUrl: `https://dummy-invoice.stripe.com/${Math.random().toString(36).substring(7)}`
+    });
+
     res.status(200).json({ 
         success: true, 
         message: 'Payment Successful! Your supplier profile has been upgraded to Premium.' 
     });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get all invoices/payments for the logged-in supplier
+// @route   GET /api/v1/subscriptions/invoices
+// @access  Private (Supplier only)
+exports.getInvoices = async (req, res) => {
+  try {
+    const supplierProfile = await Supplier.findOne({ user: req.user.id });
+    if (!supplierProfile) {
+      return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+    }
+
+    const payments = await Payment.find({ supplier: supplierProfile._id }).sort('-createdAt');
+
+    res.status(200).json({ success: true, count: payments.length, data: payments });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const PricingPlan = require('./pricingPlan.model');
+
+// @desc    Get all active pricing plans
+// @route   GET /api/v1/subscriptions/plans
+// @access  Public
+exports.getPlans = async (req, res) => {
+  try {
+    const plans = await PricingPlan.find({ isActive: true });
+    res.status(200).json({ success: true, count: plans.length, data: plans });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Create a new pricing plan
+// @route   POST /api/v1/subscriptions/plans
+// @access  Private (Admin only)
+exports.createPlan = async (req, res) => {
+  try {
+    const plan = await PricingPlan.create(req.body);
+    res.status(201).json({ success: true, data: plan });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Update a pricing plan
+// @route   PUT /api/v1/subscriptions/plans/:id
+// @access  Private (Admin only)
+exports.updatePlan = async (req, res) => {
+  try {
+    const plan = await PricingPlan.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true
+    });
+
+    if (!plan) {
+      return res.status(404).json({ success: false, message: 'Plan not found' });
+    }
+
+    res.status(200).json({ success: true, data: plan });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

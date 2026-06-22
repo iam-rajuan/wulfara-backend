@@ -118,3 +118,65 @@ exports.getBuyerRfqs = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+const Message = require('./message.model');
+
+// @desc    Add a message/reply to an RFQ thread
+// @route   POST /api/v1/rfqs/:id/messages
+// @access  Private (Buyer or Supplier)
+exports.addMessageToRfq = async (req, res) => {
+  try {
+    const rfq = await Rfq.findById(req.params.id);
+    if (!rfq) {
+      return res.status(404).json({ success: false, message: 'RFQ not found' });
+    }
+
+    const message = await Message.create({
+      rfq: rfq._id,
+      sender: req.user.id,
+      text: req.body.text,
+      attachments: req.body.attachments || []
+    });
+
+    // Automatically update RFQ status if the supplier is replying
+    if (req.user.role === 'supplier' && rfq.status === 'pending') {
+        rfq.status = 'responded';
+        await rfq.save();
+    }
+
+    res.status(201).json({ success: true, data: message });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get all messages for an RFQ thread
+// @route   GET /api/v1/rfqs/:id/messages
+// @access  Private (Buyer or Supplier)
+exports.getRfqMessages = async (req, res) => {
+  try {
+    const messages = await Message.find({ rfq: req.params.id })
+      .populate('sender', 'name role')
+      .sort('createdAt');
+
+    res.status(200).json({ success: true, count: messages.length, data: messages });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get all RFQs across the platform (Admin only)
+// @route   GET /api/v1/rfqs
+// @access  Private (Admin only)
+exports.getGlobalRfqs = async (req, res) => {
+  try {
+    const rfqs = await Rfq.find()
+      .populate('buyerUser', 'name email')
+      .populate('supplier', 'companyName')
+      .sort('-createdAt');
+
+    res.status(200).json({ success: true, count: rfqs.length, data: rfqs });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

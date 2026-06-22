@@ -86,5 +86,87 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
 - **Stateless Authentication**: Purely token-driven architecture ensuring extreme scalability.
 - **Pre-signed S3 Uploads**: Files bypass the Node.js server and upload directly from the client to AWS, saving massive bandwidth and compute power.
 
+## 📡 API Endpoints & Postman Testing Guide
+
+### 1. Authentication
+*Base URL: `/api/v1/auth`*
+
+- **Register User** (`POST /register`)
+  ```json
+  {
+    "name": "Jane Buyer",
+    "email": "jane@example.com",
+    "password": "password123",
+    "role": "buyer" // "buyer" or "supplier"
+  }
+  ```
+- **Login User** (`POST /login`)
+  ```json
+  {
+    "email": "jane@example.com",
+    "password": "password123"
+  }
+  ```
+- **Get Current User** (`GET /me`) - *Requires Bearer Token*
+
+### 2. Suppliers
+*Base URL: `/api/v1/suppliers`*
+
+- **Create Supplier Profile** (`POST /`) - *Requires Supplier Bearer Token*
+  ```json
+  {
+    "companyName": "Tech Supplies Inc.",
+    "description": "Premium wholesale electronics.",
+    "contactEmail": "sales@techsupplies.com",
+    "contactPhone": "123-456-7890",
+    "logo": "https://s3.amazonaws.com/bucket/logo.png"
+  }
+  ```
+- **Get All Approved Suppliers** (`GET /`)
+- **Get Supplier Dashboard Analytics** (`GET /dashboard`) - *Requires Supplier Bearer Token*
+
+### 3. RFQs (Request for Quotations)
+*Base URL: `/api/v1/rfqs`*
+
+- **Submit RFQ to a Supplier** (`POST /`)
+  ```json
+  {
+    "supplierId": "<SUPPLIER_PROFILE_ID_HERE>",
+    "buyerName": "Jane Buyer",
+    "buyerEmail": "jane@example.com",
+    "subject": "Quote for 500 Laptops",
+    "message": "Please provide pricing and shipping times."
+  }
+  ```
+- **Get Buyer's Sent RFQs** (`GET /buyer`) - *Requires Buyer Bearer Token*
+- **Get Supplier's Received RFQs** (`GET /supplier`) - *Requires Supplier Bearer Token*
+- **Reply to an RFQ** (`POST /:id/messages`) - *Requires Bearer Token*
+  ```json
+  {
+    "text": "We can offer a 10% discount on that volume."
+  }
+  ```
+
+### 4. Admin Management
+*Requires Admin Bearer Token*
+
+- **Approve a Supplier Listing** (`PUT /api/v1/suppliers/:id/approve`)
+  ```json
+  { "isApproved": true }
+  ```
+- **Suspend a User Account** (`PUT /api/v1/auth/users/:id/status`)
+  ```json
+  { "isActive": false }
+  ```
+- **View Master Analytics Dashboard** (`GET /api/v1/reports/dashboard`)
+- **Create Pricing Plan** (`POST /api/v1/subscriptions/plans`)
+  ```json
+  {
+    "name": "Premium Tier",
+    "price": 49.99,
+    "features": ["Priority Ranking", "Analytics Dashboard", "Unlimited RFQs"]
+  }
+  ```
+
 ---
 *Developed with modern best practices for maximum performance and security.*

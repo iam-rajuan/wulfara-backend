@@ -1,5 +1,6 @@
 const Rfq = require('./rfq.model');
 const Supplier = require('../suppliers/supplier.model');
+const sendEmail = require('../../utils/sendEmail');
 
 // @desc    Submit an RFQ to a supplier
 // @route   POST /api/v1/rfqs
@@ -29,6 +30,19 @@ exports.createRfq = async (req, res) => {
     req.body.supplier = supplierId;
 
     const rfq = await Rfq.create(req.body);
+
+    // Send confirmation email
+    try {
+      const message = `Hello ${req.body.buyerName},<br><br>Your Request for Quotation (RFQ) for <strong>${req.body.subject}</strong> has been successfully submitted to ${supplier.companyName}.<br><br>We will notify you when they respond.<br><br>Best,<br>B2B Platform Team`;
+      
+      await sendEmail({
+        email: req.body.buyerEmail,
+        subject: 'RFQ Confirmation Received',
+        html: message
+      });
+    } catch (err) {
+      console.log('Error sending confirmation email:', err.message);
+    }
 
     res.status(201).json({ success: true, data: rfq });
   } catch (error) {
@@ -85,6 +99,21 @@ exports.updateRfqStatus = async (req, res) => {
     await rfq.save();
 
     res.status(200).json({ success: true, data: rfq });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get RFQs sent by the logged-in buyer
+// @route   GET /api/v1/rfqs/buyer
+// @access  Private (Buyer/User)
+exports.getBuyerRfqs = async (req, res) => {
+  try {
+    const rfqs = await Rfq.find({ buyerUser: req.user.id })
+      .populate('supplier', 'companyName logo contactEmail contactPhone')
+      .sort('-createdAt');
+
+    res.status(200).json({ success: true, count: rfqs.length, data: rfqs });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

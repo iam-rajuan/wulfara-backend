@@ -24,6 +24,7 @@ const categoryRoutes = require('./modules/categories/category.routes');
 const supplierRoutes = require('./modules/suppliers/supplier.routes');
 const rfqRoutes = require('./modules/rfqs/rfq.routes');
 const subscriptionRoutes = require('./modules/subscriptions/subscription.routes');
+const favoriteRoutes = require('./modules/favorites/favorite.routes');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
@@ -31,6 +32,7 @@ app.use('/api/v1/categories', categoryRoutes);
 app.use('/api/v1/suppliers', supplierRoutes);
 app.use('/api/v1/rfqs', rfqRoutes);
 app.use('/api/v1/subscriptions', subscriptionRoutes);
+app.use('/api/v1/favorites', favoriteRoutes);
 // ...
 
 // 404 Error handler

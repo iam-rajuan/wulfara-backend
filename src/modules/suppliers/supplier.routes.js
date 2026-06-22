@@ -6,7 +6,9 @@ const {
   updateSupplierProfile,
   deleteSupplierProfile,
   getUploadUrl,
-  getSupplierDashboard
+  getSupplierDashboard,
+  approveSupplier,
+  featureSupplier
 } = require('./supplier.controller');
 
 const router = express.Router();

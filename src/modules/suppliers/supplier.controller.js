@@ -146,13 +146,14 @@ exports.getUploadUrl = async (req, res) => {
     const { folder, contentType } = req.body;
     
     // Ensure valid content type
-    if (!contentType || !contentType.startsWith('image/')) {
-        return res.status(400).json({ success: false, message: 'Please provide a valid image contentType (e.g., image/jpeg)' });
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+    if (!contentType || !allowedTypes.includes(contentType)) {
+        return res.status(400).json({ success: false, message: 'Please provide a valid contentType (image/jpeg, image/png, image/webp, application/pdf)' });
     }
     
     // Ensure valid folder
-    if (!folder || !['logos', 'galleries'].includes(folder)) {
-        return res.status(400).json({ success: false, message: 'Please provide a valid folder (logos or galleries)' });
+    if (!folder || !['logos', 'galleries', 'documents'].includes(folder)) {
+        return res.status(400).json({ success: false, message: 'Please provide a valid folder (logos, galleries, or documents)' });
     }
 
     const urlData = await generatePresignedUrl(`suppliers/${req.user.id}/${folder}`, contentType);

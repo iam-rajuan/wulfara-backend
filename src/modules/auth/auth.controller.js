@@ -2,7 +2,6 @@ const User = require('../users/user.model');
 const generateToken = require('../../utils/generateToken');
 const sendEmail = require('../../utils/sendEmail');
 const crypto = require('crypto');
-
 // @desc     Register user
 // @route    POST /api/v1/auth/register
 // @access   Public
@@ -14,11 +13,9 @@ exports.register = async (req, res) => {
     if (userExists) {
       return res.status(400).json({ success: false, message: 'User already exists' });
     }
-
     /* // FUTURE USE: Generate a 6-digit verification code
     const verifyCode = Math.floor(100000 + Math.random() * 900000).toString();
     */
-
     const user = await User.create({
       name,
       email,
@@ -27,7 +24,6 @@ exports.register = async (req, res) => {
       isVerified: true // Automatically verify user for now
       // verifyCode // FUTURE USE
     });
-
     // Directly return success since email verification is bypassed for now
     res.status(201).json({
       success: true,
@@ -38,7 +34,6 @@ exports.register = async (req, res) => {
     /*
     // FUTURE USE: Send verification email
     const message = `Your verification code is: <strong>${verifyCode}</strong>`;
-
     try {
       await sendEmail({
         email: user.email,
@@ -79,33 +74,28 @@ exports.verifyEmail = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 // @desc     Login user
 // @route    POST /api/v1/auth/login
 // @access   Public
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
-
     // Check for user
     const user = await User.findOne({ email }).select('+password');
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
-
     // Check if password matches
     const isMatch = await user.matchPassword(password);
-    if (isMatch) {
+    if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
-
     /*
     // FUTURE USE: Check if verified
     if (!user.isVerified) {
       return res.status(401).json({ success: false, message: 'Please verify your email first' });
     }
     */
-
     const token = generateToken(user._id);
     res.status(200).json({ success: true, token });
   } catch (error) {
@@ -170,25 +160,20 @@ exports.resetPassword = async (req, res) => {
       resetPasswordToken,
       resetPasswordExpire: { $gt: Date.now() }
     });
-
     if (!user) {
       return res.status(400).json({ success: false, message: 'Invalid token' });
     }
-
     // Set new password
     user.password = req.body.password;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpire = undefined;
     await user.save();
-
     const token = generateToken(user._id);
-
     res.status(200).json({ success: true, token });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 // @desc     Get all users (Admin only)
 // @route    GET /api/v1/auth/users
 // @access   Private (Admin)
@@ -200,7 +185,6 @@ exports.getUsers = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 // @desc     Update user status (Suspend/Activate)
 // @route    PUT /api/v1/auth/users/:id/status
 // @access   Private (Admin)
@@ -210,7 +194,6 @@ exports.updateUserStatus = async (req, res) => {
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
-
     user.isActive = req.body.isActive !== undefined ? req.body.isActive : user.isActive;
     await user.save();
 
@@ -219,7 +202,6 @@ exports.updateUserStatus = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 // @desc     Get current logged in user
 // @route    GET /api/v1/auth/me
 // @access   Private

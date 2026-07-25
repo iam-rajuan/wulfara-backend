@@ -7,8 +7,10 @@ const crypto = require('crypto');
 // @access   Public
 exports.register = async (req, res) => {
   try {
+    // 1. Destructure user inputs from request body
     const { name, email, password, role } = req.body;
 
+    // 2. Check if a user with this email already exists in the database
     const userExists = await User.findOne({ email });
     if (userExists) {
       return res.status(400).json({ success: false, message: 'User already exists' });
@@ -16,6 +18,8 @@ exports.register = async (req, res) => {
     /* // FUTURE USE: Generate a 6-digit verification code
     const verifyCode = Math.floor(100000 + Math.random() * 900000).toString();
     */
+    // 3. Create the new user.
+    // Note: Password will be automatically hashed by the pre-save hook in the User model.
     const user = await User.create({
       name,
       email,
@@ -79,13 +83,18 @@ exports.verifyEmail = async (req, res) => {
 // @access   Public
 exports.login = async (req, res) => {
   try {
+    // 1. Extract email and password from request body
     const { email, password } = req.body;
-    // Check for user
+
+    // 2. Find user by email. 
+    // We explicitly select '+password' because it is set to 'select: false' in the User model by default for security.
     const user = await User.findOne({ email }).select('+password');
+    
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
-    // Check if password matches
+    // 3. Verify password. 
+    // Uses the matchPassword instance method defined in the User model (which uses bcrypt.compare)
     const isMatch = await user.matchPassword(password);
     if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
@@ -96,6 +105,8 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Please verify your email first' });
     }
     */
+    // 4. Generate JWT Token and send response
+    // Token contains the user._id as the payload
     const token = generateToken(user._id);
     res.status(200).json({ success: true, token });
   } catch (error) {

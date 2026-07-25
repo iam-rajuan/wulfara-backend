@@ -18,6 +18,7 @@ exports.register = async (req, res) => {
     /* // FUTURE USE: Generate a 6-digit verification code
     const verifyCode = Math.floor(100000 + Math.random() * 900000).toString();
     */
+
     // 3. Create the new user.
     // Note: Password will be automatically hashed by the pre-save hook in the User model.
     const user = await User.create({
@@ -25,9 +26,10 @@ exports.register = async (req, res) => {
       email,
       password,
       role,
-      isVerified: true // Automatically verify user for now
+      isVerified: true, // Automatically verify user for now
       // verifyCode // FUTURE USE
     });
+
     // Directly return success since email verification is bypassed for now
     res.status(201).json({
       success: true,
@@ -44,7 +46,11 @@ exports.register = async (req, res) => {
         subject: 'Email Verification Code',
         html: message
       });
-      res.status(201).json({ success: true, message: 'Verification email sent. Please check your inbox for the code.' });
+      res.status(201).json({ 
+        success: true, 
+        message: 'Verification email sent. Please check your inbox for the code.',
+        token: generateToken(user._id)
+      });
     } catch (error) {
       user.verifyCode = undefined;
       await user.save({ validateBeforeSave: false });

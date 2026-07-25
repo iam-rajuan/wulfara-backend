@@ -1,19 +1,27 @@
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
 const sendEmail = async (options) => {
-  // Initialize here to ensure process.env is loaded
-  const resend = new Resend(process.env.RESEND_API_KEY);
+  // Create a transporter using Gmail SMTP
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_FROM_ADDRESS,
+      pass: process.env.EMAIL_PASSWORD, // Must be an App Password, not the regular Gmail password
+    },
+  });
+
+  const mailOptions = {
+    from: `"Wulfara Support" <${process.env.EMAIL_FROM_ADDRESS}>`,
+    to: options.email,
+    subject: options.subject,
+    html: options.html,
+  };
 
   try {
-    const data = await resend.emails.send({
-      from: 'onboarding@resend.dev', // Default testing address
-      to: options.email,
-      subject: options.subject,
-      html: options.html
-    });
-    return data;
+    const info = await transporter.sendMail(mailOptions);
+    return info;
   } catch (error) {
-    console.error('Error sending email:', error);
+    console.error('Error sending email via Nodemailer:', error);
     throw new Error('Email could not be sent');
   }
 };

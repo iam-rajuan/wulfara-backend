@@ -1,4 +1,5 @@
 const Category = require('./category.model');
+const { generatePresignedUrl } = require('../../utils/s3');
 // @desc    Get all categories
 // @route   GET /api/v1/categories
 // @access  Public
@@ -68,5 +69,30 @@ exports.deleteCategory = async (req, res) => {
     res.status(200).json({ success: true, data: {} });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get pre-signed URL for S3 upload for categories
+// @route   POST /api/v1/categories/upload-url
+// @access  Private/Admin
+exports.getUploadUrl = async (req, res) => {
+  try {
+    const { contentType } = req.body;
+    
+    // Ensure valid content type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!contentType || !allowedTypes.includes(contentType)) {
+        return res.status(400).json({ success: false, message: 'Please provide a valid contentType (image/jpeg, image/png, image/webp)' });
+    }
+    
+    const urlData = await generatePresignedUrl('categories', contentType);
+
+    res.status(200).json({
+      success: true,
+      data: urlData
+    });
+  } catch (error) {
+    console.error('S3 Presign Error:', error);
+    res.status(500).json({ success: false, message: 'Error generating upload URL' });
   }
 };

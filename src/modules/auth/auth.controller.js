@@ -1,4 +1,5 @@
 const User = require('../users/user.model');
+const Supplier = require('../suppliers/supplier.model');
 const generateToken = require('../../utils/generateToken');
 const sendEmail = require('../../utils/sendEmail');
 const crypto = require('crypto');
@@ -8,7 +9,7 @@ const crypto = require('crypto');
 exports.register = async (req, res) => {
   try {
     // 1. Destructure user inputs from request body
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, companyName, phone } = req.body;
 
     // 2. Check if a user with this email already exists in the database
     const userExists = await User.findOne({ email });
@@ -25,10 +26,25 @@ exports.register = async (req, res) => {
       name,
       email,
       password,
-      role,
+      role: role || 'buyer',
       isVerified: true, // Automatically verify user for now
       // verifyCode // FUTURE USE
     });
+
+    // 4. If the user is a supplier, create a supplier profile
+    if (user.role === 'supplier') {
+      if (!companyName) {
+        // We could return 400 here, but let's be safe and rollback user creation or just provide a fallback
+        // For simplicity and since validation is on frontend, let's assume it's provided.
+      }
+      await Supplier.create({
+        user: user._id,
+        companyName: companyName || name + " Company",
+        contactEmail: email,
+        contactPhone: phone || "",
+        description: "Profile pending details. Please update your company description in settings."
+      });
+    }
 
     // Directly return success since email verification is bypassed for now
     res.status(201).json({

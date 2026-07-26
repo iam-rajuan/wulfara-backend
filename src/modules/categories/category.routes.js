@@ -4,11 +4,15 @@ const {
   getCategory,
   createCategory,
   updateCategory,
-  deleteCategory
+  deleteCategory,
+  getUploadUrl
 } = require('./category.controller');
 
 const router = express.Router();
 const { protect, authorize } = require('../../middlewares/auth');
+
+router.route('/upload-url')
+  .post(protect, authorize('admin'), getUploadUrl);
 
 router.route('/')
   .get(getCategories)

@@ -15,9 +15,27 @@ const categorySchema = new mongoose.Schema({
     required: [true, 'Please add a description'],
     maxlength: [500, 'Description can not be more than 500 characters']
   },
-  image: {
+  icon: {
     type: String,
-    default: 'no-photo.jpg'
+    default: 'no-icon.png'
+  },
+  banner: {
+    type: String,
+    default: 'no-banner.jpg'
+  },
+  displayOrder: {
+    type: Number,
+    default: 1
+  },
+  parentCategory: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'Category',
+    default: null
+  },
+  status: {
+    type: String,
+    enum: ['Active', 'Hidden', 'Draft'],
+    default: 'Active'
   }
 }, { timestamps: true });
 

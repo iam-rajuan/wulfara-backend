@@ -30,6 +30,11 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  status: {
+    type: String,
+    enum: ['Active', 'Suspended'],
+    default: 'Active'
+  },
   verifyCode: String,
   resetPasswordToken: String,
   resetPasswordExpire: Date,

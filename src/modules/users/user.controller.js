@@ -12,6 +12,30 @@ exports.getUsers = async (req, res) => {
   }
 };
 
+const Supplier = require('../suppliers/supplier.model');
+
+// @desc    Create user
+// @route   POST /api/v1/users
+// @access  Private/Admin
+exports.createUser = async (req, res) => {
+  try {
+    const user = await User.create(req.body);
+
+    if (user.role === 'supplier') {
+      await Supplier.create({
+        user: user._id,
+        companyName: req.body.companyName || user.name + " Company",
+        contactEmail: user.email,
+        description: "Profile created by admin."
+      });
+    }
+
+    res.status(201).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Get single user
 // @route   GET /api/v1/users/:id
 // @access  Private/Admin

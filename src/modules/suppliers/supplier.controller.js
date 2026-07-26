@@ -208,17 +208,25 @@ exports.getSupplierDashboard = async (req, res) => {
   }
 };
 
-// @desc    Approve or Reject a supplier listing
-// @route   PUT /api/v1/suppliers/:id/approve
+// @desc    Review a supplier listing (Approve/Reject/Pending)
+// @route   PUT /api/v1/suppliers/:id/review
 // @access  Private (Admin only)
-exports.approveSupplier = async (req, res) => {
+exports.reviewSupplier = async (req, res) => {
   try {
     const supplier = await Supplier.findById(req.params.id);
     if (!supplier) {
       return res.status(404).json({ success: false, message: 'Supplier not found' });
     }
     
-    supplier.isApproved = req.body.isApproved;
+    if (req.body.listingStatus) {
+      supplier.listingStatus = req.body.listingStatus;
+      supplier.isApproved = req.body.listingStatus === 'Approved';
+    } else if (req.body.isApproved !== undefined) {
+      // Fallback for backwards compatibility
+      supplier.isApproved = req.body.isApproved;
+      supplier.listingStatus = req.body.isApproved ? 'Approved' : 'Pending';
+    }
+
     await supplier.save();
 
     res.status(200).json({ success: true, data: supplier });

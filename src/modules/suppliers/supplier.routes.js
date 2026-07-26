@@ -7,7 +7,7 @@ const {
   deleteSupplierProfile,
   getUploadUrl,
   getSupplierDashboard,
-  approveSupplier,
+  reviewSupplier,
   featureSupplier
 } = require('./supplier.controller');
 
@@ -28,7 +28,7 @@ router.route('/:id')
   .delete(protect, authorize('supplier', 'admin'), deleteSupplierProfile);
 
 // Admin controls
-router.put('/:id/approve', protect, authorize('admin'), approveSupplier);
+router.put('/:id/review', protect, authorize('admin'), reviewSupplier);
 router.put('/:id/feature', protect, authorize('admin'), featureSupplier);
 
 module.exports = router;

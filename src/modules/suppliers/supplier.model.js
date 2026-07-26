@@ -57,6 +57,11 @@ const supplierSchema = new mongoose.Schema({
     type: Boolean,
     default: false // Requires admin approval to be listed
   },
+  listingStatus: {
+    type: String,
+    enum: ['Pending', 'Approved', 'Rejected'],
+    default: 'Pending'
+  },
   subscriptionPlan: {
     type: String,
     enum: ['free', 'premium'],

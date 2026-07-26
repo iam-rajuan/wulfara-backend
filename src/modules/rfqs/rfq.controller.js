@@ -72,31 +72,65 @@ exports.getSupplierRfqs = async (req, res) => {
 
 // @desc    Update RFQ status
 // @route   PUT /api/v1/rfqs/:id/status
-// @access  Private (Supplier only)
+// @access  Private (Supplier or Admin)
 exports.updateRfqStatus = async (req, res) => {
   try {
     const { status } = req.body;
-
-    // Find the supplier profile for the logged in user
-    const supplierProfile = await Supplier.findOne({ user: req.user.id });
-    
-    if (!supplierProfile) {
-      return res.status(404).json({ success: false, message: 'You do not have a supplier profile' });
-    }
-
     const rfq = await Rfq.findById(req.params.id);
 
     if (!rfq) {
       return res.status(404).json({ success: false, message: 'RFQ not found' });
     }
 
-    // Ensure the RFQ belongs to this supplier
-    if (rfq.supplier.toString() !== supplierProfile._id.toString()) {
-      return res.status(403).json({ success: false, message: 'Not authorized to update this RFQ' });
+    // If not admin, verify it belongs to this supplier
+    if (req.user.role !== 'admin') {
+      const supplierProfile = await Supplier.findOne({ user: req.user.id });
+      if (!supplierProfile) {
+        return res.status(404).json({ success: false, message: 'You do not have a supplier profile' });
+      }
+      if (rfq.supplier.toString() !== supplierProfile._id.toString()) {
+        return res.status(403).json({ success: false, message: 'Not authorized to update this RFQ' });
+      }
     }
 
     rfq.status = status;
     await rfq.save();
+
+    res.status(200).json({ success: true, data: rfq });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get single RFQ
+// @route   GET /api/v1/rfqs/:id
+// @access  Private (Buyer, Supplier, or Admin)
+exports.getRfqById = async (req, res) => {
+  try {
+    const rfq = await Rfq.findById(req.params.id)
+      .populate('buyerUser', 'name email role')
+      .populate('supplier', 'companyName contactEmail contactPhone logo');
+
+    if (!rfq) {
+      return res.status(404).json({ success: false, message: 'RFQ not found' });
+    }
+
+    // Security check: Make sure user is allowed to view it
+    if (req.user.role !== 'admin') {
+      const isBuyer = rfq.buyerUser && rfq.buyerUser._id.toString() === req.user.id;
+      
+      let isSupplier = false;
+      if (req.user.role === 'supplier') {
+        const supplierProfile = await Supplier.findOne({ user: req.user.id });
+        if (supplierProfile && rfq.supplier._id.toString() === supplierProfile._id.toString()) {
+          isSupplier = true;
+        }
+      }
+
+      if (!isBuyer && !isSupplier) {
+        return res.status(403).json({ success: false, message: 'Not authorized to view this RFQ' });
+      }
+    }
 
     res.status(200).json({ success: true, data: rfq });
   } catch (error) {

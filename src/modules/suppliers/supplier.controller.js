@@ -202,7 +202,13 @@ exports.getSupplierDashboard = async (req, res) => {
       isApproved: supplierProfile.isApproved
     };
 
-    res.status(200).json({ success: true, data: dashboardData });
+    res.status(200).json({ 
+      success: true, 
+      data: {
+        profile: supplierProfile,
+        stats: dashboardData
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

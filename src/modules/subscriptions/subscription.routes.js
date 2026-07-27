@@ -4,6 +4,7 @@ const {
   simulateWebhook,
   getInvoices,
   getPlans,
+  getPlan,
   createPlan,
   updatePlan
 } = require('./subscription.controller');
@@ -21,6 +22,7 @@ router.route('/plans')
   .post(protect, authorize('admin'), createPlan);
 
 router.route('/plans/:id')
+  .get(getPlan)
   .put(protect, authorize('admin'), updatePlan);
 
 module.exports = router;

@@ -97,6 +97,21 @@ exports.getPlans = async (req, res) => {
   }
 };
 
+// @desc    Get single pricing plan
+// @route   GET /api/v1/subscriptions/plans/:id
+// @access  Public
+exports.getPlan = async (req, res) => {
+  try {
+    const plan = await PricingPlan.findById(req.params.id);
+    if (!plan) {
+      return res.status(404).json({ success: false, message: 'Plan not found' });
+    }
+    res.status(200).json({ success: true, data: plan });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Create a new pricing plan
 // @route   POST /api/v1/subscriptions/plans
 // @access  Private (Admin only)

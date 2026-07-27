@@ -41,18 +41,25 @@ const supplierSchema = new mongoose.Schema({
     ref: 'Category'
   }],
   products: [{
-    name: { type: String, required: true },
+    title: { type: String, required: true },
     description: String,
-    price: Number
+    category: String,
+    moq: String,
+    priceVis: String,
+    status: { type: String, enum: ['Published', 'Draft'], default: 'Draft' }
   }],
   logo: {
     type: String,
     default: 'no-logo.jpg'
   },
-  gallery: {
-    type: [String],
-    default: []
-  },
+  gallery: [{
+    title: String,
+    type: { type: String }, // 'Product Images', 'Factory Images', 'Certificates'
+    isPdf: Boolean,
+    isPrimary: Boolean,
+    size: String,
+    url: String
+  }],
   isApproved: {
     type: Boolean,
     default: false // Requires admin approval to be listed

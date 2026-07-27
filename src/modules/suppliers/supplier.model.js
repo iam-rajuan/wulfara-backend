@@ -46,7 +46,8 @@ const supplierSchema = new mongoose.Schema({
     category: String,
     moq: String,
     priceVis: String,
-    status: { type: String, enum: ['Published', 'Draft'], default: 'Draft' }
+    status: { type: String, enum: ['Published', 'Draft'], default: 'Draft' },
+    image: String
   }],
   logo: {
     type: String,

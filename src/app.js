@@ -32,6 +32,7 @@ const rfqRoutes = require('./modules/rfqs/rfq.routes');
 const subscriptionRoutes = require('./modules/subscriptions/subscription.routes');
 const favoriteRoutes = require('./modules/favorites/favorite.routes');
 const cmsRoutes = require('./modules/cms/cms.routes');
+const seoRoutes = require('./modules/seo/seo.routes');
 const reportRoutes = require('./modules/reports/report.routes');
 
 app.use('/api/v1/auth', authRoutes);
@@ -42,6 +43,7 @@ app.use('/api/v1/rfqs', rfqRoutes);
 app.use('/api/v1/subscriptions', subscriptionRoutes);
 app.use('/api/v1/favorites', favoriteRoutes);
 app.use('/api/v1/cms', cmsRoutes);
+app.use('/api/v1/seo', seoRoutes);
 app.use('/api/v1/reports', reportRoutes);
 // ...
 

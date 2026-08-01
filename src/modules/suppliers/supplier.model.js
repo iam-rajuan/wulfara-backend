@@ -61,6 +61,27 @@ const supplierSchema = new mongoose.Schema({
     size: String,
     url: String
   }],
+  location: {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number],
+      default: [0, 0] // [longitude, latitude]
+    },
+    formattedAddress: String
+  },
+  supplierType: {
+    type: String,
+    enum: ['Manufacturer', 'Distributor', 'Wholesaler', 'Broker', 'Service Provider'],
+    default: 'Manufacturer'
+  },
+  avgResponseTime: {
+    type: String,
+    default: '~24 Hours'
+  },
   isApproved: {
     type: Boolean,
     default: false // Requires admin approval to be listed
@@ -83,5 +104,8 @@ const supplierSchema = new mongoose.Schema({
     default: false
   }
 }, { timestamps: true });
+
+// Add 2dsphere index for geospatial queries
+supplierSchema.index({ location: '2dsphere' });
 
 module.exports = mongoose.model('Supplier', supplierSchema);

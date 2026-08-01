@@ -1,5 +1,6 @@
 const Supplier = require('./supplier.model');
 const { generatePresignedUrl } = require('../../utils/s3');
+const geocodeAddress = require('../../utils/geocode');
 
 // @desc    Get all suppliers (with optional category filtering)
 // @route   GET /api/v1/suppliers
@@ -12,10 +13,34 @@ exports.getSuppliers = async (req, res) => {
     const reqQuery = { ...req.query };
 
     // Fields to exclude
-    const removeFields = ['select', 'sort', 'page', 'limit'];
+    const removeFields = ['select', 'sort', 'page', 'limit', 'keyword', 'lat', 'lng', 'distance', 'supplierType'];
 
     // Loop over removeFields and delete them from reqQuery
     removeFields.forEach(param => delete reqQuery[param]);
+
+    if (req.query.supplierType) {
+      reqQuery.supplierType = req.query.supplierType;
+    }
+
+    if (req.query.keyword) {
+      reqQuery.$or = [
+        { companyName: { $regex: req.query.keyword, $options: 'i' } },
+        { description: { $regex: req.query.keyword, $options: 'i' } }
+      ];
+    }
+
+    // Geospatial querying
+    if (req.query.lat && req.query.lng && req.query.distance) {
+      const lat = parseFloat(req.query.lat);
+      const lng = parseFloat(req.query.lng);
+      const distance = parseInt(req.query.distance, 10); // in kilometers
+      
+      const radius = distance / 6378.1; // Divide distance by radius of Earth in km
+
+      reqQuery.location = {
+        $geoWithin: { $centerSphere: [[lng, lat], radius] }
+      };
+    }
 
     // Only show approved suppliers to public, unless admin is requesting
     if (!req.user || req.user.role !== 'admin') {
@@ -75,6 +100,24 @@ exports.createSupplierProfile = async (req, res) => {
       return res.status(400).json({ success: false, message: 'You already have a supplier profile' });
     }
 
+    // Geocode address if provided
+    if (req.body.address) {
+      const geoResult = await geocodeAddress(req.body.address);
+      if (geoResult) {
+        req.body.location = {
+          type: 'Point',
+          coordinates: geoResult.coordinates,
+          formattedAddress: geoResult.formattedAddress
+        };
+      } else {
+        req.body.location = {
+          type: 'Point',
+          coordinates: [0, 0],
+          formattedAddress: req.body.address
+        };
+      }
+    }
+
     const supplier = await Supplier.create(req.body);
     res.status(201).json({ success: true, data: supplier });
   } catch (error) {
@@ -101,6 +144,24 @@ exports.updateSupplierProfile = async (req, res) => {
     // Don't allow regular users to approve their own profiles
     if (req.user.role !== 'admin' && req.body.isApproved) {
       delete req.body.isApproved;
+    }
+
+    // Geocode address if provided
+    if (req.body.address) {
+      const geoResult = await geocodeAddress(req.body.address);
+      if (geoResult) {
+        req.body.location = {
+          type: 'Point',
+          coordinates: geoResult.coordinates,
+          formattedAddress: geoResult.formattedAddress
+        };
+      } else {
+        req.body.location = {
+          type: 'Point',
+          coordinates: [0, 0],
+          formattedAddress: req.body.address
+        };
+      }
     }
 
     supplier = await Supplier.findByIdAndUpdate(req.params.id, req.body, {

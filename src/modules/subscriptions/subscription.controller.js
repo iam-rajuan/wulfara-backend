@@ -1,68 +1,136 @@
 const Supplier = require('../suppliers/supplier.model');
 const Payment = require('./payment.model');
 
-// @desc    Simulate creating a Stripe Checkout Session
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
+const PricingPlan = require('./pricingPlan.model');
+
+// @desc    Create a Stripe Checkout Session
 // @route   POST /api/v1/subscriptions/checkout-session
 // @access  Private (Supplier only)
 exports.createCheckoutSession = async (req, res) => {
   try {
-    const supplierProfile = await Supplier.findOne({ user: req.user.id });
+    const { planId, billingCycle } = req.body;
+    
+    if (!planId || !billingCycle) {
+      return res.status(400).json({ success: false, message: 'Please provide planId and billingCycle' });
+    }
 
+    const supplierProfile = await Supplier.findOne({ user: req.user.id });
     if (!supplierProfile) {
       return res.status(404).json({ success: false, message: 'You do not have a supplier profile' });
     }
 
-    if (supplierProfile.subscriptionPlan === 'premium') {
-      return res.status(400).json({ success: false, message: 'You are already on the Premium plan' });
+    let plan;
+    // Try by ID first (in case frontend passes ObjectId), fallback to finding by name (e.g. 'premium')
+    try {
+      plan = await PricingPlan.findById(planId);
+    } catch(e) {
+      plan = await PricingPlan.findOne({ name: new RegExp(planId, 'i') });
+    }
+    
+    if (!plan) {
+      plan = await PricingPlan.findOne({ name: new RegExp(planId, 'i') });
     }
 
-    // In the future, this is where you would call stripe.checkout.sessions.create()
-    // For now, we simulate returning a checkout URL
-    const dummyCheckoutUrl = `http://localhost:5000/api/v1/subscriptions/simulate-payment?supplierId=${supplierProfile._id}`;
+    if (!plan) {
+      // Create a fallback mock plan for development if not found
+      plan = {
+        _id: 'mock_plan_id_123',
+        name: planId.charAt(0).toUpperCase() + planId.slice(1),
+        price: planId === 'premium' ? 299 : (planId === 'pro' ? 129 : 49),
+        description: 'B2B Marketplace Supplier Subscription'
+      };
+    }
+
+    const price = plan.price; // Get the price directly from the plan document
+
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: `WULFARA ${plan.name} Plan - ${billingCycle}`,
+              description: plan.description || 'B2B Marketplace Supplier Subscription'
+            },
+            unit_amount: Math.round(price * 100), // Stripe expects amounts in cents
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment', // Use 'payment' for one-time or 'subscription' if using Stripe Billing
+      success_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/listed?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/subscription`,
+      client_reference_id: supplierProfile._id.toString(),
+      metadata: {
+        supplierId: supplierProfile._id.toString(),
+        planId: plan._id.toString(),
+        planName: plan.name,
+        billingCycle
+      }
+    });
 
     res.status(200).json({
       success: true,
-      message: 'Checkout session created. Navigate to paymentUrl to complete payment.',
-      paymentUrl: dummyCheckoutUrl
+      message: 'Checkout session created',
+      paymentUrl: session.url
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-// @desc    Simulate Stripe Webhook / Successful Payment
-// @route   GET /api/v1/subscriptions/simulate-payment
-// @access  Public (Simulating Webhook)
-exports.simulateWebhook = async (req, res) => {
+
+// @desc    Stripe Webhook Handler
+// @route   POST /api/v1/subscriptions/webhook
+// @access  Public
+exports.stripeWebhook = async (req, res) => {
+  const payload = req.body;
+  const sig = req.headers['stripe-signature'];
+  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_dummy';
+
+  let event;
+
   try {
-    const { supplierId } = req.query;
-
-    if (!supplierId) {
-      return res.status(400).json({ success: false, message: 'Missing supplierId' });
+    // Only construct event if a secret is provided, otherwise trust payload (for dev fallback)
+    if (process.env.STRIPE_WEBHOOK_SECRET) {
+      event = stripe.webhooks.constructEvent(payload, sig, endpointSecret);
+    } else {
+      // Parse raw body for dev fallback if no secret is configured
+      event = JSON.parse(payload.toString());
     }
-    const supplierProfile = await Supplier.findById(supplierId);
-    if (!supplierProfile) {
-      return res.status(404).json({ success: false, message: 'Supplier not found' });
-    }
-    // Upgrade the supplier to premium
-    supplierProfile.subscriptionPlan = 'premium';
-    // Simulate assigning a stripe customer ID
-    supplierProfile.stripeCustomerId = `cus_dummy_${Math.random().toString(36).substring(7)}`;
-    await supplierProfile.save();
-    // Create a dummy payment record (invoice)
-    await Payment.create({
-      supplier: supplierProfile._id,
-      amount: 49.99, // dummy premium price
-      status: 'paid',
-      invoiceUrl: `https://dummy-invoice.stripe.com/${Math.random().toString(36).substring(7)}`
-    });
-
-    res.status(200).json({
-      success: true,
-      message: 'Payment Successful! Your supplier profile has been upgraded to Premium.'
-    });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+  } catch (err) {
+    console.error('Webhook Error:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
+
+  // Handle the event
+  if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const supplierId = session.client_reference_id || session.metadata.supplierId;
+    const planName = session.metadata?.planName || 'premium';
+
+    try {
+      const supplierProfile = await Supplier.findById(supplierId);
+      if (supplierProfile) {
+        supplierProfile.subscriptionPlan = planName.toLowerCase();
+        supplierProfile.stripeCustomerId = session.customer;
+        await supplierProfile.save();
+
+        await Payment.create({
+          supplier: supplierProfile._id,
+          amount: session.amount_total / 100,
+          status: 'paid',
+          stripeSessionId: session.id,
+          // If invoice exists (in subscription mode), you can save invoiceUrl
+        });
+      }
+    } catch (err) {
+      console.error('Error upgrading supplier profile:', err);
+    }
+  }
+
+  res.status(200).json({ received: true });
 };
 
 // @desc    Get all invoices/payments for the logged-in supplier
@@ -83,7 +151,6 @@ exports.getInvoices = async (req, res) => {
   }
 };
 
-const PricingPlan = require('./pricingPlan.model');
 
 // @desc    Get all active pricing plans
 // @route   GET /api/v1/subscriptions/plans

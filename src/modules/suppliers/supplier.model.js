@@ -36,6 +36,28 @@ const supplierSchema = new mongoose.Schema({
       'Please use a valid URL with HTTP or HTTPS'
     ]
   },
+  coreProducts: [{
+    type: String
+  }],
+  certifications: [{
+    type: String
+  }],
+  serviceAreas: [{
+    type: String
+  }],
+  moq: {
+    value: String,
+    unit: String
+  },
+  businessHours: {
+    weekdays: { start: String, end: String },
+    weekends: String
+  },
+  shippingOptions: {
+    fob: Boolean,
+    cif: Boolean,
+    exw: Boolean
+  },
   categories: [{
     type: mongoose.Schema.ObjectId,
     ref: 'Category'

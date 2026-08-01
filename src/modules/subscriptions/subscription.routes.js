@@ -1,7 +1,6 @@
 const express = require('express');
 const {
   createCheckoutSession,
-  simulateWebhook,
   getInvoices,
   getPlans,
   getPlan,
@@ -13,7 +12,6 @@ const router = express.Router();
 const { protect, authorize } = require('../../middlewares/auth');
 
 router.post('/checkout-session', protect, authorize('supplier', 'admin'), createCheckoutSession);
-router.get('/simulate-payment', simulateWebhook);
 router.get('/invoices', protect, authorize('supplier', 'admin'), getInvoices);
 
 // Pricing Plan Routes

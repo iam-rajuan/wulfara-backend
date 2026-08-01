@@ -16,9 +16,8 @@ exports.register = async (req, res) => {
     if (userExists) {
       return res.status(400).json({ success: false, message: 'User already exists' });
     }
-    /* // FUTURE USE: Generate a 6-digit verification code
+    // Generate a 6-digit verification code
     const verifyCode = Math.floor(100000 + Math.random() * 900000).toString();
-    */
 
     // 3. Create the new user.
     // Note: Password will be automatically hashed by the pre-save hook in the User model.
@@ -27,8 +26,8 @@ exports.register = async (req, res) => {
       email,
       password,
       role: role || 'buyer',
-      isVerified: true, // Automatically verify user for now
-      // verifyCode // FUTURE USE
+      isVerified: false, 
+      verifyCode 
     });
 
     // 4. If the user is a supplier, create a supplier profile
@@ -46,33 +45,19 @@ exports.register = async (req, res) => {
       });
     }
 
-    // Directly return success since email verification is bypassed for now
-    res.status(201).json({
-      success: true,
-      message: 'User registered successfully.',
-      token: generateToken(user._id)
-    });
-
-    /*
-    // FUTURE USE: Send verification email
+    // Send verification email (Mocked in console for development)
     const message = `Your verification code is: <strong>${verifyCode}</strong>`;
-    try {
-      await sendEmail({
-        email: user.email,
-        subject: 'Email Verification Code',
-        html: message
-      });
-      res.status(201).json({ 
-        success: true, 
-        message: 'Verification email sent. Please check your inbox for the code.',
-        token: generateToken(user._id)
-      });
-    } catch (error) {
-      user.verifyCode = undefined;
-      await user.save({ validateBeforeSave: false });
-      return res.status(500).json({ success: false, message: 'Email could not be sent' });
-    }
-    */
+    console.log(`[Email Mock] To: ${user.email} | Subject: Email Verification Code | Body: ${message}`);
+    
+    // try {
+    //   await sendEmail({ email: user.email, subject: 'Email Verification Code', html: message });
+    // } catch (err) { console.log(err); }
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Verification email sent. Please check your inbox (or server console) for the code.',
+      email: user.email // Useful for frontend to know which email to verify
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -121,12 +106,10 @@ exports.login = async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
-    /*
-    // FUTURE USE: Check if verified
+    // Check if verified
     if (!user.isVerified) {
       return res.status(401).json({ success: false, message: 'Please verify your email first' });
     }
-    */
     // 4. Generate JWT Token and send response
     // Token contains the user._id as the payload
     const token = generateToken(user._id);

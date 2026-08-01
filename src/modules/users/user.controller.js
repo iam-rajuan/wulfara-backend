@@ -95,3 +95,24 @@ exports.getMe = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Update current logged in user
+// @route   PUT /api/v1/users/me
+// @access  Private
+exports.updateMe = async (req, res) => {
+  try {
+    // Prevent updating password or role through this route
+    if (req.body.password || req.body.role || req.body.isVerified) {
+      return res.status(400).json({ success: false, message: 'Cannot update password, role, or verification status here' });
+    }
+
+    const user = await User.findByIdAndUpdate(req.user.id, req.body, {
+      new: true,
+      runValidators: true
+    });
+
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

@@ -5,7 +5,8 @@ const {
   getUser,
   updateUser,
   deleteUser,
-  getMe
+  getMe,
+  updateMe
 } = require('./user.controller');
 
 const router = express.Router();
@@ -14,7 +15,9 @@ const { protect, authorize } = require('../../middlewares/auth');
 // Protect all routes below
 router.use(protect);
 
-router.get('/me', getMe);
+router.route('/me')
+  .get(getMe)
+  .put(updateMe);
 
 // Admin only routes below
 router.use(authorize('admin'));

@@ -1,6 +1,7 @@
 const Rfq = require('./rfq.model');
 const Supplier = require('../suppliers/supplier.model');
 const sendEmail = require('../../utils/sendEmail');
+const { generatePresignedUrl } = require('../../utils/s3');
 
 // @desc    Submit an RFQ to a supplier
 // @route   POST /api/v1/rfqs
@@ -210,6 +211,25 @@ exports.getGlobalRfqs = async (req, res) => {
       .sort('-createdAt');
 
     res.status(200).json({ success: true, count: rfqs.length, data: rfqs });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get presigned URL for RFQ attachment upload
+// @route   POST /api/v1/rfqs/upload-url
+// @access  Private
+exports.getUploadUrl = async (req, res) => {
+  try {
+    const { contentType } = req.body;
+    if (!contentType) {
+      return res.status(400).json({ success: false, message: 'Content type is required' });
+    }
+    
+    // Group uploads by user id in the rfqs folder
+    const urlData = await generatePresignedUrl(`rfqs/${req.user.id}`, contentType);
+    
+    res.status(200).json({ success: true, data: urlData });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -7,13 +7,15 @@ const {
   addMessageToRfq,
   getRfqMessages,
   getGlobalRfqs,
-  getRfqById
+  getRfqById,
+  getUploadUrl
 } = require('./rfq.controller');
 
 const router = express.Router();
 const { protect, authorize } = require('../../middlewares/auth');
 
 router.post('/', createRfq);
+router.post('/upload-url', protect, getUploadUrl);
 router.get('/', protect, authorize('admin'), getGlobalRfqs);
 router.get('/:id', protect, getRfqById);
 

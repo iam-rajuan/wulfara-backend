@@ -45,3 +45,26 @@ exports.authorize = (...roles) => {
     next();
   };
 };
+
+// Optional auth for public routes that behave differently for admins
+exports.protectOptional = async (req, res, next) => {
+  let token;
+
+  if (req.headers.authorization) {
+    if (req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    } else {
+      token = req.headers.authorization;
+    }
+  }
+
+  if (token) {
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      req.user = await User.findById(decoded.id);
+    } catch (err) {
+      // Ignore errors for optional auth
+    }
+  }
+  next();
+};

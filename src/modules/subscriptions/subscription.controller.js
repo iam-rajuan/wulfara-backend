@@ -151,6 +151,18 @@ exports.getInvoices = async (req, res) => {
   }
 };
 
+// @desc    Get all payments (Admin)
+// @route   GET /api/v1/subscriptions/admin/payments
+// @access  Private/Admin
+exports.getAllPayments = async (req, res) => {
+  try {
+    const payments = await Payment.find().populate('supplier').sort('-createdAt');
+    res.status(200).json({ success: true, count: payments.length, data: payments });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 
 // @desc    Get all active pricing plans
 // @route   GET /api/v1/subscriptions/plans
@@ -206,6 +218,25 @@ exports.updatePlan = async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: plan });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Delete a pricing plan
+// @route   DELETE /api/v1/subscriptions/plans/:id
+// @access  Private (Admin only)
+exports.deletePlan = async (req, res) => {
+  try {
+    const plan = await PricingPlan.findById(req.params.id);
+
+    if (!plan) {
+      return res.status(404).json({ success: false, message: 'Plan not found' });
+    }
+
+    await PricingPlan.findByIdAndDelete(req.params.id);
+
+    res.status(200).json({ success: true, data: {} });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

@@ -5,7 +5,9 @@ const {
   getPlans,
   getPlan,
   createPlan,
-  updatePlan
+  updatePlan,
+  deletePlan,
+  getAllPayments
 } = require('./subscription.controller');
 
 const router = express.Router();
@@ -21,6 +23,10 @@ router.route('/plans')
 
 router.route('/plans/:id')
   .get(getPlan)
-  .put(protect, authorize('admin'), updatePlan);
+  .put(protect, authorize('admin'), updatePlan)
+  .delete(protect, authorize('admin'), deletePlan);
+
+// Admin Payments Route
+router.get('/admin/payments', protect, authorize('admin'), getAllPayments);
 
 module.exports = router;

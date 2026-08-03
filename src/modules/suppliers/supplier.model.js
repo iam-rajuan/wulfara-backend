@@ -124,6 +124,16 @@ const supplierSchema = new mongoose.Schema({
   isFeatured: {
     type: Boolean,
     default: false
+  },
+  averageRating: {
+    type: Number,
+    min: [1, 'Rating must be at least 1'],
+    max: [5, 'Rating must can not be more than 5'],
+    default: 0
+  },
+  totalReviews: {
+    type: Number,
+    default: 0
   }
 }, { timestamps: true });
 

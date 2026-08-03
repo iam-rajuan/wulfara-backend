@@ -134,6 +134,11 @@ const supplierSchema = new mongoose.Schema({
   totalReviews: {
     type: Number,
     default: 0
+  },
+  monthlyViews: {
+    type: Map,
+    of: Number,
+    default: {}
   }
 }, { timestamps: true });
 

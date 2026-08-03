@@ -81,6 +81,15 @@ exports.getSupplier = async (req, res) => {
         }
     }
 
+    // Increment view count for the current month
+    const currentDate = new Date();
+    const monthKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+    
+    // Only count views if it's not the supplier themselves viewing their own profile
+    if (!req.user || req.user.id !== supplier.user.toString()) {
+      await Supplier.findByIdAndUpdate(supplier._id, { $inc: { [`monthlyViews.${monthKey}`]: 1 } });
+    }
+
     res.status(200).json({ success: true, data: supplier });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -256,12 +265,26 @@ exports.getSupplierDashboard = async (req, res) => {
 
     const profileCompletionPercentage = Math.round((completedFields / totalFields) * 100);
 
+    // Generate analytics data for the last 6 months
+    const analytics = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      const name = d.toLocaleString('default', { month: 'short' });
+      analytics.push({
+        name,
+        views: supplierProfile.monthlyViews?.get(key) || 0
+      });
+    }
+
     const dashboardData = {
       totalRfqs,
       pendingRfqs,
       profileCompletion: `${profileCompletionPercentage}%`,
       subscriptionPlan: supplierProfile.subscriptionPlan,
-      isApproved: supplierProfile.isApproved
+      isApproved: supplierProfile.isApproved,
+      analytics
     };
 
     res.status(200).json({ 

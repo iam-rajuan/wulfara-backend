@@ -8,7 +8,8 @@ const {
   getRfqMessages,
   getGlobalRfqs,
   getRfqById,
-  getUploadUrl
+  getUploadUrl,
+  getRfqStats
 } = require('./rfq.controller');
 
 const router = express.Router();
@@ -23,6 +24,9 @@ router.get('/buyer', protect, getBuyerRfqs);
 
 // Supplier protected routes
 router.get('/supplier', protect, authorize('supplier', 'admin'), getSupplierRfqs);
+
+// Admin stats route (Must come BEFORE ID-based routes)
+router.get('/stats', protect, authorize('admin'), getRfqStats);
 
 // ID-based routes (Must come AFTER specific string routes)
 router.get('/:id', protect, getRfqById);

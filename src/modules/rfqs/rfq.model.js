@@ -46,7 +46,7 @@ const rfqSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'reviewed', 'responded', 'closed'],
+    enum: ['pending', 'reviewed', 'responded', 'closed', 'disputed', 'resolved'],
     default: 'pending'
   }
 }, { timestamps: true });

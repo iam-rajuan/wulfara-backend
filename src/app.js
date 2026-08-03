@@ -39,6 +39,7 @@ const favoriteRoutes = require('./modules/favorites/favorite.routes');
 const cmsRoutes = require('./modules/cms/cms.routes');
 const seoRoutes = require('./modules/seo/seo.routes');
 const reportRoutes = require('./modules/reports/report.routes');
+const messageRoutes = require('./modules/messages/message.routes');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
@@ -50,8 +51,7 @@ app.use('/api/v1/favorites', favoriteRoutes);
 app.use('/api/v1/cms', cmsRoutes);
 app.use('/api/v1/seo', seoRoutes);
 app.use('/api/v1/reports', reportRoutes);
-// ...
-
+app.use('/api/v1/messages', messageRoutes);
 // 404 Error handler
 app.use((req, res, next) => {
   res.status(404).json({ error: 'Not Found', message: 'The requested resource could not be found' });

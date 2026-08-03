@@ -38,7 +38,7 @@ exports.getFavorites = async (req, res) => {
   try {
     const favorites = await Favorite.find({ user: req.user.id }).populate({
       path: 'supplier',
-      select: 'companyName description logo categories'
+      select: 'companyName description logo categories location user'
     });
 
     res.status(200).json({ success: true, count: favorites.length, data: favorites });

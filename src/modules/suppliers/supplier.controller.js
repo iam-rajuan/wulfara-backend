@@ -1,6 +1,7 @@
 const Supplier = require('./supplier.model');
 const { generatePresignedUrl } = require('../../utils/s3');
 const geocodeAddress = require('../../utils/geocode');
+const { createNotification } = require('../../utils/notificationService');
 
 // @desc    Get all suppliers (with optional category filtering)
 // @route   GET /api/v1/suppliers
@@ -295,6 +296,17 @@ exports.reviewSupplier = async (req, res) => {
     }
 
     await supplier.save();
+
+    if (supplier.user) {
+      await createNotification(
+        req,
+        supplier.user,
+        'Profile Review Update',
+        `Your supplier profile status has been updated to ${supplier.listingStatus}.`,
+        'approval',
+        supplier._id
+      );
+    }
 
     res.status(200).json({ success: true, data: supplier });
   } catch (error) {

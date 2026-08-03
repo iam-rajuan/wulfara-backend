@@ -20,11 +20,15 @@ const io = new Server(server, {
   }
 });
 
+// Expose io to routes/controllers
+app.set('io', io);
+
 io.on('connection', (socket) => {
   console.log(`Socket connected: ${socket.id}`);
   
   socket.on('join_room', (roomId) => {
     socket.join(roomId);
+    console.log(`Socket ${socket.id} joined room ${roomId}`);
   });
 
   socket.on('send_message', (data) => {

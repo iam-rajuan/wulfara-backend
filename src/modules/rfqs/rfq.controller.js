@@ -2,6 +2,7 @@ const Rfq = require('./rfq.model');
 const Supplier = require('../suppliers/supplier.model');
 const sendEmail = require('../../utils/sendEmail');
 const { generatePresignedUrl } = require('../../utils/s3');
+const { createNotification } = require('../../utils/notificationService');
 
 // @desc    Submit an RFQ to a supplier
 // @route   POST /api/v1/rfqs
@@ -43,6 +44,18 @@ exports.createRfq = async (req, res) => {
       });
     } catch (err) {
       console.log('Error sending confirmation email:', err.message);
+    }
+
+    // Notify the supplier about the new RFQ
+    if (supplier.user) {
+      await createNotification(
+        req,
+        supplier.user,
+        'New RFQ Received',
+        `You have received a new RFQ for ${req.body.subject} from ${req.body.buyerName}`,
+        'rfq',
+        rfq._id
+      );
     }
 
     res.status(201).json({ success: true, data: rfq });
@@ -96,6 +109,18 @@ exports.updateRfqStatus = async (req, res) => {
 
     rfq.status = status;
     await rfq.save();
+
+    // Notify the buyer
+    if (rfq.buyerUser) {
+      await createNotification(
+        req,
+        rfq.buyerUser,
+        'RFQ Status Updated',
+        `The status of your RFQ has been updated to ${status}.`,
+        'rfq',
+        rfq._id
+      );
+    }
 
     res.status(200).json({ success: true, data: rfq });
   } catch (error) {
@@ -177,6 +202,21 @@ exports.addMessageToRfq = async (req, res) => {
     if (req.user.role === 'supplier' && rfq.status === 'pending') {
         rfq.status = 'responded';
         await rfq.save();
+    }
+
+    // Notify the other party
+    const isSupplier = req.user.role === 'supplier';
+    const recipientId = isSupplier ? rfq.buyerUser : (await Supplier.findById(rfq.supplier)).user;
+
+    if (recipientId) {
+      await createNotification(
+        req,
+        recipientId,
+        'New Message',
+        `You received a new message regarding an RFQ.`,
+        'message',
+        rfq._id
+      );
     }
 
     res.status(201).json({ success: true, data: message });

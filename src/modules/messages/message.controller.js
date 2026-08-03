@@ -2,6 +2,7 @@ const Conversation = require('./conversation.model');
 const ChatMessage = require('./message.model');
 const User = require('../users/user.model');
 const Rfq = require('../rfqs/rfq.model');
+const { createNotification } = require('../../utils/notificationService');
 
 // @desc    Get user conversations
 // @route   GET /api/v1/messages/conversations
@@ -100,6 +101,19 @@ exports.sendMessage = async (req, res) => {
     await conversation.save();
 
     await message.populate('sender', 'firstName lastName role');
+
+    // Notify the other participants in the conversation
+    const recipientIds = conversation.participants.filter(p => p.toString() !== req.user.id.toString());
+    for (const recipientId of recipientIds) {
+      await createNotification(
+        req,
+        recipientId,
+        'New Message',
+        `You have received a new message from ${message.sender.firstName || 'a user'}.`,
+        'message',
+        conversation._id
+      );
+    }
 
     res.status(201).json({ success: true, data: message });
   } catch (error) {

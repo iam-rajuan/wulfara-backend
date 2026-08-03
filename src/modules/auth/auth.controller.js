@@ -49,9 +49,9 @@ exports.register = async (req, res) => {
     const message = `Your verification code is: <strong>${verifyCode}</strong>`;
     console.log(`[Email Mock] To: ${user.email} | Subject: Email Verification Code | Body: ${message}`);
     
-    // try {
-    //   await sendEmail({ email: user.email, subject: 'Email Verification Code', html: message });
-    // } catch (err) { console.log(err); }
+    try {
+      await sendEmail({ email: user.email, subject: 'Email Verification Code', html: message });
+    } catch (err) { console.log(err); }
 
     res.status(201).json({ 
       success: true, 
@@ -144,9 +144,20 @@ exports.forgotPassword = async (req, res) => {
 
     await user.save({ validateBeforeSave: false });
 
-    // In a real app, this would be a link to the frontend reset password page. 
-    // We will send the plain token for API testing purposes.
-    const message = `You are receiving this email because you requested a password reset. Please use the following token to reset your password via the API: <br><strong>${resetToken}</strong>`;
+    const isDashboard = req.body.isDashboard;
+    const baseUrl = isDashboard ? (process.env.DASHBOARD_URL || 'http://localhost:5173') : (process.env.FRONTEND_URL || 'http://localhost:3000');
+    const path = isDashboard ? 'new-password' : 'reset-password';
+    const resetUrl = `${baseUrl}/${path}/${resetToken}`;
+    const message = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1b2b3a;">
+        <h2 style="color: #1b2b3a;">Password Reset Request</h2>
+        <p>You are receiving this email because you requested a password reset for your Wulfara account.</p>
+        <p>Please click the button below to reset your password:</p>
+        <a href="${resetUrl}" style="display:inline-block;padding:12px 24px;background-color:#dca12f;color:#1b2b3a;text-decoration:none;font-weight:bold;border-radius:6px;margin:16px 0;">Reset Password</a>
+        <p style="font-size: 14px; color: #666;">Or copy and paste this link into your browser:</p>
+        <p style="font-size: 14px; word-break: break-all;"><a href="${resetUrl}" style="color: #0052CC;">${resetUrl}</a></p>
+      </div>
+    `;
 
     try {
       await sendEmail({

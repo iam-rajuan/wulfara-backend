@@ -20,7 +20,17 @@ exports.getSuppliers = async (req, res) => {
     removeFields.forEach(param => delete reqQuery[param]);
 
     if (req.query.supplierType) {
-      reqQuery.supplierType = req.query.supplierType;
+      if (typeof req.query.supplierType === 'string' && req.query.supplierType.includes(',')) {
+        reqQuery.supplierType = { $in: req.query.supplierType.split(',').map(s => s.trim()) };
+      } else if (Array.isArray(req.query.supplierType)) {
+        reqQuery.supplierType = { $in: req.query.supplierType };
+      } else {
+        reqQuery.supplierType = req.query.supplierType;
+      }
+    }
+
+    if (req.query.location) {
+      reqQuery['location.formattedAddress'] = { $regex: req.query.location, $options: 'i' };
     }
 
     if (req.query.keyword) {

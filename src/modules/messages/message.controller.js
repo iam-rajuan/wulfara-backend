@@ -12,7 +12,7 @@ exports.getConversations = async (req, res) => {
     const conversations = await Conversation.find({
       participants: req.user.id
     })
-      .populate('participants', 'firstName lastName role')
+      .populate('participants', 'name role')
       .populate('lastMessage')
       .populate('rfq', 'rfqNumber title status')
       .sort({ lastMessageAt: -1 });
@@ -40,7 +40,7 @@ exports.getMessages = async (req, res) => {
     }
 
     const messages = await ChatMessage.find({ conversation: req.params.id })
-      .populate('sender', 'firstName lastName role')
+      .populate('sender', 'name role')
       .sort({ createdAt: 1 });
 
     // Mark as read
@@ -100,7 +100,7 @@ exports.sendMessage = async (req, res) => {
     conversation.lastMessageAt = message.createdAt;
     await conversation.save();
 
-    await message.populate('sender', 'firstName lastName role');
+    await message.populate('sender', 'name role');
 
     // Notify the other participants in the conversation
     const recipientIds = conversation.participants.filter(p => p.toString() !== req.user.id.toString());
@@ -109,7 +109,7 @@ exports.sendMessage = async (req, res) => {
         req,
         recipientId,
         'New Message',
-        `You have received a new message from ${message.sender.firstName || 'a user'}.`,
+        `You have received a new message from ${message.sender.name || 'a user'}.`,
         'message',
         conversation._id
       );

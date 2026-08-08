@@ -62,6 +62,15 @@ const supplierSchema = new mongoose.Schema({
     type: mongoose.Schema.ObjectId,
     ref: 'Category'
   }],
+  establishedYear: {
+    type: String,
+  },
+  employeeCount: {
+    type: String,
+  },
+  annualTurnover: {
+    type: String,
+  },
   products: [{
     title: { type: String, required: true },
     description: String,

@@ -6,25 +6,18 @@ const { requestLogger, logger } = require('./utils/logger');
 
 const app = express();
 
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:5173')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
 const corsOptions = {
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-      return;
-    }
-
-    callback(new Error(`CORS blocked origin: ${origin}`));
-  },
+  origin: true,
+  credentials: true,
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  optionsSuccessStatus: 204,
 };
 
 // Middlewares
 app.use(helmet());
 app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 const { stripeWebhook } = require('./modules/subscriptions/subscription.controller');
 
 // Stripe Webhook MUST be registered before express.json() so it can access the raw body

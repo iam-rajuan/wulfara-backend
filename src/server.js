@@ -6,10 +6,6 @@ const { logger } = require('./utils/logger');
 const { Server } = require('socket.io');
 
 const PORT = process.env.PORT || 5000;
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:5173')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
 
 const startServer = async () => {
   try {
@@ -21,8 +17,8 @@ const startServer = async () => {
 
     const io = new Server(server, {
       cors: {
-        origin: allowedOrigins,
-        methods: ['GET', 'POST', 'PUT', 'DELETE']
+        origin: '*',
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
       }
     });
 

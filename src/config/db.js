@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const dns = require('dns');
+const { logger } = require('../utils/logger');
 
 const fallbackDnsServers = ['8.8.8.8', '1.1.1.1'];
 
@@ -14,18 +15,18 @@ const connectDB = async () => {
 
   try {
     const conn = await connectMongo();
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    logger.info({ host: conn.connection.host }, 'MongoDB connected');
   } catch (error) {
-    console.warn(`MongoDB connection failed with default DNS: ${error.message}`);
-    console.warn(`Retrying MongoDB connection with DNS servers: ${fallbackDnsServers.join(', ')}`);
+    logger.warn({ err: error }, 'MongoDB connection failed with default DNS');
+    logger.warn({ dnsServers: fallbackDnsServers }, 'Retrying MongoDB connection with fallback DNS servers');
 
     dns.setServers(fallbackDnsServers);
 
     try {
       const conn = await connectMongo();
-      console.log(`MongoDB Connected: ${conn.connection.host}`);
+      logger.info({ host: conn.connection.host }, 'MongoDB connected');
     } catch (fallbackError) {
-      console.error(`Error connecting to MongoDB: ${fallbackError.message}`);
+      logger.error({ err: fallbackError }, 'Error connecting to MongoDB');
       process.exit(1);
     }
   }

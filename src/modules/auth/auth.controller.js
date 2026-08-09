@@ -3,6 +3,7 @@ const Supplier = require('../suppliers/supplier.model');
 const generateToken = require('../../utils/generateToken');
 const sendEmail = require('../../utils/sendEmail');
 const crypto = require('crypto');
+const { logger } = require('../../utils/logger');
 // @desc     Register user
 // @route    POST /api/v1/auth/register
 // @access   Public
@@ -92,27 +93,37 @@ exports.login = async (req, res) => {
   try {
     // 1. Extract email and password from request body
     const { email, password } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedPassword = typeof password === 'string' ? password.trim() : password;
 
     // 2. Find user by email. 
     // We explicitly select '+password' because it is set to 'select: false' in the User model by default for security.
-    const user = await User.findOne({ email }).select('+password');
+    const user = await User.findOne({ email: normalizedEmail }).select('+password');
     
     if (!user) {
+      logger.warn({ email: normalizedEmail }, 'Login failed: user not found');
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     // 3. Verify password. 
     // Uses the matchPassword instance method defined in the User model (which uses bcrypt.compare)
-    const isMatch = await user.matchPassword(password);
+    const isMatch = await user.matchPassword(normalizedPassword);
     if (!isMatch) {
+      logger.warn({
+        email: normalizedEmail,
+        passwordLength: typeof password === 'string' ? password.length : 0,
+        trimmedPasswordLength: typeof normalizedPassword === 'string' ? normalizedPassword.length : 0,
+      }, 'Login failed: password mismatch');
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
     // Check if verified
     if (!user.isVerified) {
+      logger.warn({ email: normalizedEmail, role: user.role }, 'Login failed: email not verified');
       return res.status(401).json({ success: false, message: 'Please verify your email first' });
     }
     
     // Check if suspended
     if (user.status === 'Suspended') {
+      logger.warn({ email: normalizedEmail, role: user.role }, 'Login failed: account suspended');
       return res.status(403).json({ success: false, message: 'Your account has been suspended. Please contact support.' });
     }
     // 4. Generate JWT Token and send response

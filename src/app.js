@@ -1,15 +1,14 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const morgan = require('morgan');
 const path = require('path');
+const { requestLogger, logger } = require('./utils/logger');
 
 const app = express();
 
 // Middlewares
 app.use(helmet());
 app.use(cors());
-app.use(morgan('dev'));
 const { stripeWebhook } = require('./modules/subscriptions/subscription.controller');
 
 // Stripe Webhook MUST be registered before express.json() so it can access the raw body
@@ -17,6 +16,7 @@ app.post('/api/v1/subscriptions/webhook', express.raw({ type: 'application/json'
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(requestLogger);
 
 // Basic route for health check
 app.get('/health', (req, res) => {
@@ -63,7 +63,7 @@ app.use((req, res, next) => {
 
 // Global Error Handler
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  logger.error({ err, path: req.originalUrl }, 'Unhandled application error');
   res.status(err.status || 500).json({
     error: 'Internal Server Error',
     message: err.message || 'Something went wrong',

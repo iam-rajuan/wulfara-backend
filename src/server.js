@@ -1,6 +1,7 @@
 require('dotenv').config();
 const connectDB = require('./config/db');
 const app = require('./app');
+const { logger } = require('./utils/logger');
 
 const { Server } = require('socket.io');
 
@@ -11,7 +12,7 @@ const startServer = async () => {
     await connectDB();
 
     const server = app.listen(PORT, () => {
-      console.log(`Server is running on port ${PORT}`);
+      logger.info({ port: PORT }, 'Server is running');
     });
 
     const io = new Server(server, {
@@ -25,11 +26,11 @@ const startServer = async () => {
     app.set('io', io);
 
     io.on('connection', (socket) => {
-      console.log(`Socket connected: ${socket.id}`);
+      logger.info({ socketId: socket.id }, 'Socket connected');
       
       socket.on('join_room', (roomId) => {
         socket.join(roomId);
-        console.log(`Socket ${socket.id} joined room ${roomId}`);
+        logger.info({ socketId: socket.id, roomId }, 'Socket joined room');
       });
 
       socket.on('send_message', (data) => {
@@ -38,11 +39,11 @@ const startServer = async () => {
       });
 
       socket.on('disconnect', () => {
-        console.log(`Socket disconnected: ${socket.id}`);
+        logger.info({ socketId: socket.id }, 'Socket disconnected');
       });
     });
   } catch (error) {
-    console.error(error.message);
+    logger.error({ err: error }, error.message);
     process.exit(1);
   }
 };
@@ -51,6 +52,6 @@ startServer();
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (err) => {
-  console.error('Unhandled Rejection! Shutting down...', err);
+  logger.error({ err }, 'Unhandled Rejection! Shutting down...');
   process.exit(1);
 });

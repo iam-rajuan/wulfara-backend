@@ -1,12 +1,33 @@
 const mongoose = require('mongoose');
+const dns = require('dns');
+
+const fallbackDnsServers = ['8.8.8.8', '1.1.1.1'];
+
+const connectMongo = () => mongoose.connect(process.env.MONGO_URI);
 
 const connectDB = async () => {
+  if (!process.env.MONGO_URI) {
+    throw new Error(
+      'MONGO_URI is not set. Create a .env file from .env.example before running the server.'
+    );
+  }
+
   try {
-    const conn = await mongoose.connect(process.env.MONGO_URI);
+    const conn = await connectMongo();
     console.log(`MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
-    console.error(`Error connecting to MongoDB: ${error.message}`);
-    process.exit(1);
+    console.warn(`MongoDB connection failed with default DNS: ${error.message}`);
+    console.warn(`Retrying MongoDB connection with DNS servers: ${fallbackDnsServers.join(', ')}`);
+
+    dns.setServers(fallbackDnsServers);
+
+    try {
+      const conn = await connectMongo();
+      console.log(`MongoDB Connected: ${conn.connection.host}`);
+    } catch (fallbackError) {
+      console.error(`Error connecting to MongoDB: ${fallbackError.message}`);
+      process.exit(1);
+    }
   }
 };
 

@@ -1,5 +1,6 @@
 const User = require('../users/user.model');
 const Supplier = require('../suppliers/supplier.model');
+const PendingRegistration = require('./pendingRegistration.model');
 const generateToken = require('../../utils/generateToken');
 const sendEmail = require('../../utils/sendEmail');
 const crypto = require('crypto');
@@ -11,53 +12,43 @@ exports.register = async (req, res) => {
   try {
     // 1. Destructure user inputs from request body
     const { name, email, password, role, companyName, phone } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
 
     // 2. Check if a user with this email already exists in the database
-    const userExists = await User.findOne({ email });
+    const userExists = await User.findOne({ email: normalizedEmail });
     if (userExists) {
       return res.status(400).json({ success: false, message: 'User already exists' });
     }
     // Generate a 6-digit verification code
     const verifyCode = Math.floor(100000 + Math.random() * 900000).toString();
 
-    // 3. Create the new user.
-    // Note: Password will be automatically hashed by the pre-save hook in the User model.
-    const user = await User.create({
+    await PendingRegistration.findOneAndDelete({ email: normalizedEmail });
+
+    await PendingRegistration.create({
       name,
-      email,
+      email: normalizedEmail,
       password,
       role: role || 'buyer',
-      isVerified: false, 
-      verifyCode 
+      companyName,
+      phone,
+      verifyCode,
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000),
     });
 
-    // 4. If the user is a supplier, create a supplier profile
-    if (user.role === 'supplier') {
-      if (!companyName) {
-        // We could return 400 here, but let's be safe and rollback user creation or just provide a fallback
-        // For simplicity and since validation is on frontend, let's assume it's provided.
-      }
-      await Supplier.create({
-        user: user._id,
-        companyName: companyName || name + " Company",
-        contactEmail: email,
-        contactPhone: phone || "",
-        description: "Profile pending details. Please update your company description in settings."
-      });
-    }
-
-    // Send verification email (Mocked in console for development)
     const message = `Your verification code is: <strong>${verifyCode}</strong>`;
-    console.log(`[Email Mock] To: ${user.email} | Subject: Email Verification Code | Body: ${message}`);
+    console.log(`[Email Mock] To: ${normalizedEmail} | Subject: Email Verification Code | Body: ${message}`);
     
     try {
-      await sendEmail({ email: user.email, subject: 'Email Verification Code', html: message });
-    } catch (err) { console.log(err); }
+      await sendEmail({ email: normalizedEmail, subject: 'Email Verification Code', html: message });
+    } catch (err) {
+      await PendingRegistration.findOneAndDelete({ email: normalizedEmail });
+      throw err;
+    }
 
     res.status(201).json({ 
       success: true, 
-      message: 'Verification email sent. Please check your inbox (or server console) for the code.',
-      email: user.email // Useful for frontend to know which email to verify
+      message: 'Verification email sent. Please check your inbox for the code.',
+      email: normalizedEmail
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -70,18 +61,46 @@ exports.register = async (req, res) => {
 exports.verifyEmail = async (req, res) => {
   try {
     const { email, verifyCode } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
 
-    const user = await User.findOne({ email, verifyCode });
+    const pendingRegistration = await PendingRegistration.findOne({
+      email: normalizedEmail,
+      verifyCode,
+      expiresAt: { $gt: new Date() },
+    });
 
-    if (!user) {
-      return res.status(400).json({ success: false, message: 'Invalid verification code' });
+    if (!pendingRegistration) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired verification code' });
     }
 
-    user.isVerified = true;
-    user.verifyCode = undefined;
-    await user.save();
+    const userExists = await User.findOne({ email: normalizedEmail });
+    if (userExists) {
+      await PendingRegistration.findByIdAndDelete(pendingRegistration._id);
+      return res.status(400).json({ success: false, message: 'User already exists' });
+    }
 
-    res.status(200).json({ success: true, message: 'Email verified successfully' });
+    const user = await User.create({
+      name: pendingRegistration.name,
+      email: pendingRegistration.email,
+      password: pendingRegistration.password,
+      role: pendingRegistration.role || 'buyer',
+      isVerified: true,
+    });
+
+    if (user.role === 'supplier') {
+      await Supplier.create({
+        user: user._id,
+        companyName: pendingRegistration.companyName || `${pendingRegistration.name} Company`,
+        contactEmail: pendingRegistration.email,
+        contactPhone: pendingRegistration.phone || "",
+        description: "Profile pending details. Please update your company description in settings."
+      });
+    }
+
+    await PendingRegistration.findByIdAndDelete(pendingRegistration._id);
+    const token = generateToken(user._id);
+
+    res.status(200).json({ success: true, message: 'Email verified successfully', token });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

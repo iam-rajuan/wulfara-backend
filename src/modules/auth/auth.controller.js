@@ -5,6 +5,24 @@ const generateToken = require('../../utils/generateToken');
 const sendEmail = require('../../utils/sendEmail');
 const crypto = require('crypto');
 const { logger } = require('../../utils/logger');
+
+const getRequestOrigin = (req) => {
+  const origin = req.get('origin');
+  if (origin) {
+    return origin.replace(/\/+$/, '');
+  }
+
+  const referer = req.get('referer');
+  if (referer) {
+    try {
+      return new URL(referer).origin;
+    } catch (error) {
+      logger.warn({ referer, err: error }, 'Invalid referer while resolving request origin');
+    }
+  }
+
+  return null;
+};
 // @desc     Register user
 // @route    POST /api/v1/auth/register
 // @access   Public
@@ -175,7 +193,8 @@ exports.forgotPassword = async (req, res) => {
     await user.save({ validateBeforeSave: false });
 
     const isDashboard = req.body.isDashboard;
-    const baseUrl = isDashboard ? (process.env.DASHBOARD_URL || 'http://localhost:5173') : (process.env.FRONTEND_URL || 'http://localhost:3000');
+    const fallbackBaseUrl = isDashboard ? 'http://localhost:5173' : 'http://localhost:3000';
+    const baseUrl = getRequestOrigin(req) || fallbackBaseUrl;
     const path = isDashboard ? 'new-password' : 'reset-password';
     const resetUrl = `${baseUrl}/${path}/${resetToken}`;
     const message = `

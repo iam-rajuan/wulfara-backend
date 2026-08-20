@@ -4,6 +4,24 @@ const Payment = require('./payment.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
 const PricingPlan = require('./pricingPlan.model');
 
+const getRequestOrigin = (req) => {
+  const origin = req.get('origin');
+  if (origin) {
+    return origin.replace(/\/+$/, '');
+  }
+
+  const referer = req.get('referer');
+  if (referer) {
+    try {
+      return new URL(referer).origin;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  return null;
+};
+
 // @desc    Create a Stripe Checkout Session
 // @route   POST /api/v1/subscriptions/checkout-session
 // @access  Private (Supplier only)
@@ -44,6 +62,8 @@ exports.createCheckoutSession = async (req, res) => {
 
     const price = plan.price; // Get the price directly from the plan document
 
+    const appOrigin = getRequestOrigin(req) || 'http://localhost:5173';
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: [
@@ -60,8 +80,8 @@ exports.createCheckoutSession = async (req, res) => {
         },
       ],
       mode: 'payment', // Use 'payment' for one-time or 'subscription' if using Stripe Billing
-      success_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/listed?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/subscription`,
+      success_url: `${appOrigin}/listed?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appOrigin}/subscription`,
       client_reference_id: supplierProfile._id.toString(),
       metadata: {
         supplierId: supplierProfile._id.toString(),

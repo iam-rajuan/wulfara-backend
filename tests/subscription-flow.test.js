@@ -58,6 +58,72 @@ describe('subscription and stripe flow', () => {
     expect(refreshedSupplier.onboardingStep).toBe('payment');
   });
 
+  it('uses the selected monthly pricing plan as the only source of checkout amount and billing metadata', async () => {
+    const { user, supplier } = await createCheckoutReadySupplier();
+    const monthlyPlan = await createPricingPlan({
+      name: 'Monthly Premium',
+      slug: `monthly-premium-${Date.now()}`,
+      price: 149,
+      billingCycle: 'Monthly',
+    });
+
+    await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({
+        planId: monthlyPlan._id.toString(),
+        billingCycle: 'Annual (Tampered)',
+        listingPeriod: '999 Months',
+      })
+      .expect(200);
+
+    const latestCall = stripeFactory.__mock.createSession.mock.calls.at(-1)[0];
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+
+    expect(latestCall.line_items[0].price_data.unit_amount).toBe(14900);
+    expect(latestCall.metadata.billingCycle).toBe('Monthly');
+    expect(latestCall.metadata.listingPeriod).toBe('1 Month');
+    expect(refreshedSupplier.selectedPlan.toString()).toBe(monthlyPlan._id.toString());
+    expect(refreshedSupplier.selectedBillingCycle).toBe('Monthly');
+    expect(refreshedSupplier.selectedListingPeriod).toBe('1 Month');
+  });
+
+  it('uses the selected yearly pricing plan as the only source of checkout amount and billing metadata', async () => {
+    const { user, supplier } = await createCheckoutReadySupplier();
+    const yearlyPlan = await createPricingPlan({
+      name: 'Yearly Premium',
+      slug: `yearly-premium-${Date.now()}`,
+      price: 999,
+      billingCycle: 'Annual (Paid Upfront)',
+    });
+
+    const response = await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({
+        planId: yearlyPlan._id.toString(),
+      })
+      .expect(200);
+
+    const latestCall = stripeFactory.__mock.createSession.mock.calls.at(-1)[0];
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+
+    expect(latestCall.line_items[0].price_data.unit_amount).toBe(99900);
+    expect(latestCall.metadata.billingCycle).toBe('Annual (Paid Upfront)');
+    expect(latestCall.metadata.listingPeriod).toBe('12 Months');
+    expect(response.body.orderSummary).toMatchObject({
+      planId: yearlyPlan._id.toString(),
+      planName: yearlyPlan.name,
+      billingCycle: 'Annual (Paid Upfront)',
+      listingPeriod: '12 Months',
+      basePrice: 999,
+      totalDueToday: 999,
+    });
+    expect(refreshedSupplier.selectedPlan.toString()).toBe(yearlyPlan._id.toString());
+    expect(refreshedSupplier.selectedBillingCycle).toBe('Annual (Paid Upfront)');
+    expect(refreshedSupplier.selectedListingPeriod).toBe('12 Months');
+  });
+
   it('derives billing and listing metadata from the pricing plan when the frontend sends only the plan id', async () => {
     const { plan, user, supplier } = await createCheckoutReadySupplier();
 

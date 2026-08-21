@@ -117,7 +117,7 @@ describe('supplier lifecycle acceptance', () => {
     await request(app)
       .put('/api/v1/suppliers/onboarding/subscription')
       .set(authHeader(loginResponse.body.token))
-      .send({ planId: inactivePlan._id.toString(), billingCycle: 'Annual' })
+      .send({ planId: inactivePlan._id.toString() })
       .expect(404);
 
     await request(app)
@@ -125,8 +125,6 @@ describe('supplier lifecycle acceptance', () => {
       .set(authHeader(loginResponse.body.token))
       .send({
         planId: activePlan._id.toString(),
-        billingCycle: 'Annual',
-        listingPeriod: '12-months',
       })
       .expect(200)
       .expect(({ body }) => {
@@ -135,8 +133,8 @@ describe('supplier lifecycle acceptance', () => {
 
     supplier = await Supplier.findOne({ user: user._id });
     expect(supplier.selectedPlan.toString()).toBe(activePlan._id.toString());
-    expect(supplier.selectedBillingCycle).toBe('Annual');
-    expect(supplier.selectedListingPeriod).toBe('12-months');
+    expect(supplier.selectedBillingCycle).toBe(activePlan.billingCycle);
+    expect(supplier.selectedListingPeriod).toBe('12 Months');
     expect(supplier.subscriptionStatus).toBe('pending');
     expect(supplier.paymentStatus).toBe('unpaid');
     expect(supplier.onboardingStep).toBe('payment');
@@ -326,6 +324,41 @@ describe('supplier lifecycle acceptance', () => {
 
     expect(response.body.data.onboarding.step).toBe('payment');
     expect(response.body.data.onboarding.nextRoute).toBe('/subscription');
+  });
+
+  it('keeps listed suppliers publicly discoverable even if legacy approval flags drift', async () => {
+    const category = await createCategory({ name: 'Public Search Category' });
+    const user = await createUser({ role: 'supplier', email: uniqueEmail('public-search') });
+    const supplier = await createSupplierForUser(user, {
+      companyName: 'Discoverable Supplier',
+      description: 'Supplier that should remain visible in public search.',
+      contactEmail: 'public-search@example.com',
+      contactPhone: '+15550001234',
+      categories: [category._id],
+      isApproved: false,
+      listingStatus: 'Pending',
+      subscriptionStatus: 'active',
+      paymentStatus: 'paid',
+      location: {
+        type: 'Point',
+        coordinates: [90.4125, 23.8103],
+        formattedAddress: 'Dhaka, Bangladesh',
+      },
+    });
+
+    supplier.onboardingStep = 'listed';
+    supplier.onboardingCompletedAt = new Date();
+    await supplier.save();
+
+    await request(app)
+      .get(`/api/v1/suppliers/${supplier._id}`)
+      .expect(200);
+
+    const listResponse = await request(app)
+      .get('/api/v1/suppliers')
+      .expect(200);
+
+    expect(listResponse.body.data.some((entry) => entry._id.toString() === supplier._id.toString())).toBe(true);
   });
 
   it('blocks buyer accounts from supplier onboarding endpoints', async () => {

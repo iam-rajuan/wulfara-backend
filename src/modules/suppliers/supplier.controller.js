@@ -67,6 +67,7 @@ const getSupplierForRequest = async (req, options = {}) => {
 exports.getSuppliers = async (req, res) => {
   try {
     let query;
+    const andConditions = [];
 
     // Copy req.query
     const reqQuery = { ...req.query };
@@ -104,10 +105,12 @@ exports.getSuppliers = async (req, res) => {
     }
 
     if (req.query.keyword) {
-      reqQuery.$or = [
+      andConditions.push({
+        $or: [
         { companyName: { $regex: req.query.keyword, $options: 'i' } },
         { description: { $regex: req.query.keyword, $options: 'i' } }
-      ];
+      ],
+      });
     }
 
     // Geospatial querying
@@ -125,17 +128,41 @@ exports.getSuppliers = async (req, res) => {
 
     // Only show listed suppliers to the public, unless admin is requesting
     if (!req.user || req.user.role !== 'admin') {
-      reqQuery.isApproved = true;
-      reqQuery.listingStatus = 'Approved';
-      reqQuery.subscriptionStatus = 'active';
-      reqQuery.paymentStatus = 'paid';
+      andConditions.push({
+        $or: [
+          {
+            isApproved: true,
+            listingStatus: 'Approved',
+            subscriptionStatus: 'active',
+            paymentStatus: 'paid',
+          },
+          {
+            onboardingStep: 'listed',
+            onboardingCompletedAt: { $ne: null },
+          },
+        ],
+      });
     }
 
     if (req.query.listed === 'true' || req.query.eligibleForRfq === 'true') {
-      reqQuery.isApproved = true;
-      reqQuery.listingStatus = 'Approved';
-      reqQuery.subscriptionStatus = 'active';
-      reqQuery.paymentStatus = 'paid';
+      andConditions.push({
+        $or: [
+          {
+            isApproved: true,
+            listingStatus: 'Approved',
+            subscriptionStatus: 'active',
+            paymentStatus: 'paid',
+          },
+          {
+            onboardingStep: 'listed',
+            onboardingCompletedAt: { $ne: null },
+          },
+        ],
+      });
+    }
+
+    if (andConditions.length > 0) {
+      reqQuery.$and = andConditions;
     }
 
     query = Supplier.find(reqQuery).populate({
@@ -665,7 +692,7 @@ exports.saveOnboardingSubscription = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Complete company information before choosing a subscription plan' });
     }
 
-    const { planId, billingCycle = '', listingPeriod = '' } = req.body;
+    const { planId } = req.body;
     if (!planId) {
       return res.status(400).json({ success: false, message: 'Please select a subscription plan' });
     }
@@ -675,8 +702,11 @@ exports.saveOnboardingSubscription = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Selected pricing plan was not found or is inactive' });
     }
 
-    const resolvedBillingCycle = billingCycle || plan.billingCycle || '';
-    const resolvedListingPeriod = listingPeriod || deriveListingPeriod(resolvedBillingCycle, supplier.selectedListingPeriod);
+    const resolvedBillingCycle = plan.billingCycle || '';
+    const resolvedListingPeriod = deriveListingPeriod(
+      resolvedBillingCycle,
+      supplier.selectedListingPeriod
+    );
 
     supplier.selectedPlan = plan._id;
     supplier.selectedBillingCycle = resolvedBillingCycle;

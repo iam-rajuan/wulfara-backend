@@ -25,7 +25,7 @@ const getSupplierForCheckout = async (req) => {
 // @access  Private (Supplier only)
 exports.createCheckoutSession = async (req, res) => {
   try {
-    const { planId, billingCycle = '', listingPeriod = '' } = req.body;
+    const { planId } = req.body;
     
     if (!planId) {
       return res.status(400).json({ success: false, message: 'Please provide planId' });
@@ -53,10 +53,11 @@ exports.createCheckoutSession = async (req, res) => {
     }
 
     const price = plan.price;
-    const resolvedBillingCycle =
-      billingCycle || supplierProfile.selectedBillingCycle || plan.billingCycle || '';
-    const resolvedListingPeriod =
-      listingPeriod || supplierProfile.selectedListingPeriod || deriveListingPeriod(resolvedBillingCycle);
+    const resolvedBillingCycle = plan.billingCycle || '';
+    const resolvedListingPeriod = deriveListingPeriod(
+      resolvedBillingCycle,
+      supplierProfile.selectedListingPeriod
+    );
 
     supplierProfile.selectedPlan = plan._id;
     supplierProfile.selectedBillingCycle = resolvedBillingCycle;
@@ -116,7 +117,15 @@ exports.createCheckoutSession = async (req, res) => {
     res.status(200).json({
       success: true,
       message: 'Checkout session created',
-      paymentUrl: session.url
+      paymentUrl: session.url,
+      orderSummary: {
+        planId: plan._id,
+        planName: plan.name,
+        billingCycle: resolvedBillingCycle,
+        listingPeriod: resolvedListingPeriod,
+        basePrice: price,
+        totalDueToday: price,
+      },
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

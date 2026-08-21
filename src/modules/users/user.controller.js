@@ -153,6 +153,11 @@ exports.deleteUser = async (req, res) => {
       });
     }
 
+    // Cascade delete supplier profile if user is a supplier
+    if (user.role === 'supplier') {
+      await Supplier.deleteOne({ user: user._id });
+    }
+
     await user.deleteOne();
     res.status(200).json({ success: true, data: {} });
   } catch (error) {

@@ -72,10 +72,18 @@ const deriveListingPeriod = (billingCycle = '', fallback = '') => {
 const isSupplierListed = (supplier) =>
   Boolean(
     supplier &&
-      supplier.subscriptionStatus === 'active' &&
-      supplier.paymentStatus === 'paid' &&
-      supplier.isApproved === true &&
-      supplier.listingStatus === 'Approved'
+      (
+        (
+          supplier.subscriptionStatus === 'active' &&
+          supplier.paymentStatus === 'paid' &&
+          supplier.isApproved === true &&
+          supplier.listingStatus === 'Approved'
+        ) ||
+        (
+          supplier.onboardingStep === ONBOARDING_STEPS.LISTED &&
+          supplier.onboardingCompletedAt
+        )
+      )
   );
 
 const getNextOnboardingStep = (supplier) => {

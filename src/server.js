@@ -2,6 +2,9 @@ require('dotenv').config();
 const connectDB = require('./config/db');
 const app = require('./app');
 const { logger } = require('./utils/logger');
+const { enforceProtectedSuperAdmins, syncAdminUserFromEnv } = require('./utils/adminSeed');
+const { assignFallbackAdminRoles, seedDefaultAdminRoles } = require('./modules/adminRoles/adminRole.service');
+const { buildSocketCorsOptions } = require('./utils/origins');
 
 const { Server } = require('socket.io');
 
@@ -10,16 +13,18 @@ const PORT = process.env.PORT || 5000;
 const startServer = async () => {
   try {
     await connectDB();
+    await seedDefaultAdminRoles();
+    await assignFallbackAdminRoles();
+    await syncAdminUserFromEnv();
+    await enforceProtectedSuperAdmins();
+    app.set('trust proxy', 1);
 
     const server = app.listen(PORT, () => {
       logger.info({ port: PORT }, 'Server is running');
     });
 
     const io = new Server(server, {
-      cors: {
-        origin: '*',
-        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
-      }
+      cors: buildSocketCorsOptions(),
     });
 
     // Expose io to routes/controllers

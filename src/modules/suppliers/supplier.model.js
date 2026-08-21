@@ -21,7 +21,7 @@ const supplierSchema = new mongoose.Schema({
   contactEmail: {
     type: String,
     match: [
-      /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+      /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/,
       'Please add a valid email'
     ]
   },
@@ -119,13 +119,45 @@ const supplierSchema = new mongoose.Schema({
   },
   listingStatus: {
     type: String,
-    enum: ['Pending', 'Approved', 'Rejected'],
+    enum: ['Pending', 'Approved', 'Rejected', 'Hidden', 'Suspended'],
     default: 'Pending'
   },
   subscriptionPlan: {
     type: String,
-    enum: ['free', 'premium'],
+    enum: ['free', 'basic', 'pro', 'premium'],
     default: 'free'
+  },
+  selectedPlan: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'PricingPlan',
+    default: null
+  },
+  selectedBillingCycle: {
+    type: String,
+    default: ''
+  },
+  selectedListingPeriod: {
+    type: String,
+    default: ''
+  },
+  subscriptionStatus: {
+    type: String,
+    enum: ['inactive', 'pending', 'active', 'cancelled', 'failed'],
+    default: 'inactive'
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['unpaid', 'pending', 'paid', 'failed', 'cancelled'],
+    default: 'unpaid'
+  },
+  onboardingStep: {
+    type: String,
+    enum: ['industry', 'company-info', 'subscription', 'payment', 'listed'],
+    default: 'industry'
+  },
+  onboardingCompletedAt: {
+    type: Date,
+    default: null
   },
   stripeCustomerId: {
     type: String

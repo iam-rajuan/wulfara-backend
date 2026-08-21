@@ -3,23 +3,20 @@ const Payment = require('./payment.model');
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
 const PricingPlan = require('./pricingPlan.model');
+const { inferPlanTier } = require('./planTier');
+const { resolveAppOrigin } = require('../../utils/origins');
+const {
+  hasCompanyInfo,
+  hasIndustrySelection,
+  syncSupplierLifecycle,
+} = require('../suppliers/supplierLifecycle');
 
-const getRequestOrigin = (req) => {
-  const origin = req.get('origin');
-  if (origin) {
-    return origin.replace(/\/+$/, '');
+const getSupplierForCheckout = async (req) => {
+  if (req.user.role === 'admin' && req.body.supplierId) {
+    return Supplier.findById(req.body.supplierId);
   }
 
-  const referer = req.get('referer');
-  if (referer) {
-    try {
-      return new URL(referer).origin;
-    } catch (error) {
-      return null;
-    }
-  }
-
-  return null;
+  return Supplier.findOne({ user: req.user.id });
 };
 
 // @desc    Create a Stripe Checkout Session
@@ -27,42 +24,60 @@ const getRequestOrigin = (req) => {
 // @access  Private (Supplier only)
 exports.createCheckoutSession = async (req, res) => {
   try {
-    const { planId, billingCycle } = req.body;
+    const { planId, billingCycle, listingPeriod = '' } = req.body;
     
     if (!planId || !billingCycle) {
       return res.status(400).json({ success: false, message: 'Please provide planId and billingCycle' });
     }
 
-    const supplierProfile = await Supplier.findOne({ user: req.user.id });
+    const supplierProfile = await getSupplierForCheckout(req);
     if (!supplierProfile) {
       return res.status(404).json({ success: false, message: 'You do not have a supplier profile' });
     }
 
-    let plan;
-    // Try by ID first (in case frontend passes ObjectId), fallback to finding by name (e.g. 'premium')
-    try {
-      plan = await PricingPlan.findById(planId);
-    } catch(e) {
-      plan = await PricingPlan.findOne({ name: new RegExp(planId, 'i') });
+    if (!hasIndustrySelection(supplierProfile) || !hasCompanyInfo(supplierProfile)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Complete industry and company information before starting checkout',
+      });
     }
-    
-    if (!plan) {
-      plan = await PricingPlan.findOne({ name: new RegExp(planId, 'i') });
-    }
+
+    const plan = await PricingPlan.findOne({
+      _id: planId,
+      isActive: true,
+    });
 
     if (!plan) {
-      // Create a fallback mock plan for development if not found
-      plan = {
-        _id: 'mock_plan_id_123',
-        name: planId.charAt(0).toUpperCase() + planId.slice(1),
-        price: planId === 'premium' ? 299 : (planId === 'pro' ? 129 : 49),
-        description: 'B2B Marketplace Supplier Subscription'
-      };
+      return res.status(404).json({ success: false, message: 'Selected pricing plan was not found or is inactive' });
     }
 
-    const price = plan.price; // Get the price directly from the plan document
+    const price = plan.price;
 
-    const appOrigin = getRequestOrigin(req) || 'http://localhost:5173';
+    supplierProfile.selectedPlan = plan._id;
+    supplierProfile.selectedBillingCycle = billingCycle;
+    supplierProfile.selectedListingPeriod = listingPeriod;
+    supplierProfile.subscriptionPlan = inferPlanTier(plan);
+    supplierProfile.subscriptionStatus = 'pending';
+    supplierProfile.paymentStatus = 'pending';
+    syncSupplierLifecycle(supplierProfile);
+    await supplierProfile.save();
+
+    const appOrigin = resolveAppOrigin(req, process.env.DASHBOARD_ORIGIN);
+    if (!appOrigin) {
+      return res.status(500).json({
+        success: false,
+        message: 'DASHBOARD_ORIGIN must be configured before starting supplier checkout in production',
+      });
+    }
+
+    const adminAssistedQuery =
+      req.user.role === 'admin'
+        ? `?session_id={CHECKOUT_SESSION_ID}&supplierId=${supplierProfile._id.toString()}&mode=admin_assisted`
+        : '?session_id={CHECKOUT_SESSION_ID}';
+    const cancelQuery =
+      req.user.role === 'admin'
+        ? `?supplierId=${supplierProfile._id.toString()}&mode=admin_assisted`
+        : '';
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -80,14 +95,16 @@ exports.createCheckoutSession = async (req, res) => {
         },
       ],
       mode: 'payment', // Use 'payment' for one-time or 'subscription' if using Stripe Billing
-      success_url: `${appOrigin}/listed?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${appOrigin}/subscription`,
+      success_url: `${appOrigin}/listed${adminAssistedQuery}`,
+      cancel_url: `${appOrigin}/subscription${cancelQuery}`,
       client_reference_id: supplierProfile._id.toString(),
       metadata: {
         supplierId: supplierProfile._id.toString(),
         planId: plan._id.toString(),
         planName: plan.name,
-        billingCycle
+        planTier: inferPlanTier(plan),
+        billingCycle,
+        listingPeriod,
       }
     });
 
@@ -129,16 +146,39 @@ exports.stripeWebhook = async (req, res) => {
     const session = event.data.object;
     const supplierId = session.client_reference_id || session.metadata.supplierId;
     const planName = session.metadata?.planName || 'premium';
+    const planId = session.metadata?.planId || null;
+    const planTier = session.metadata?.planTier || null;
+    const billingCycle = session.metadata?.billingCycle || '';
+    const listingPeriod = session.metadata?.listingPeriod || '';
 
     try {
       const supplierProfile = await Supplier.findById(supplierId);
       if (supplierProfile) {
-        supplierProfile.subscriptionPlan = planName.toLowerCase();
+        const existingPayment = await Payment.findOne({ stripeSessionId: session.id });
+        if (existingPayment) {
+          return res.status(200).json({ received: true, duplicate: true });
+        }
+
+        const selectedPlan = planId ? await PricingPlan.findById(planId) : null;
+
+        supplierProfile.subscriptionPlan = inferPlanTier(selectedPlan || planTier || planName);
+        supplierProfile.selectedPlan = planId || supplierProfile.selectedPlan;
+        supplierProfile.selectedBillingCycle = billingCycle || supplierProfile.selectedBillingCycle;
+        supplierProfile.selectedListingPeriod = listingPeriod || supplierProfile.selectedListingPeriod;
+        supplierProfile.subscriptionStatus = 'active';
+        supplierProfile.paymentStatus = 'paid';
+        supplierProfile.isApproved = true;
+        supplierProfile.listingStatus = 'Approved';
         supplierProfile.stripeCustomerId = session.customer;
+        syncSupplierLifecycle(supplierProfile);
         await supplierProfile.save();
 
         await Payment.create({
           supplier: supplierProfile._id,
+          plan: planId,
+          planName,
+          billingCycle,
+          listingPeriod,
           amount: session.amount_total / 100,
           status: 'paid',
           stripeSessionId: session.id,
@@ -178,6 +218,31 @@ exports.getAllPayments = async (req, res) => {
   try {
     const payments = await Payment.find().populate('supplier').sort('-createdAt');
     res.status(200).json({ success: true, count: payments.length, data: payments });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get all active supplier subscriptions (Admin)
+// @route   GET /api/v1/subscriptions/admin/active
+// @access  Private/Admin
+exports.getActiveSubscriptions = async (req, res) => {
+  try {
+    const suppliers = await Supplier.find({
+      subscriptionStatus: 'active',
+      paymentStatus: 'paid',
+      isApproved: true,
+      listingStatus: 'Approved',
+    })
+      .populate({ path: 'user', select: 'name email status isVerified' })
+      .populate({ path: 'selectedPlan', select: 'name slug price billingCycle isActive' })
+      .sort('-updatedAt');
+
+    res.status(200).json({
+      success: true,
+      count: suppliers.length,
+      data: suppliers,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

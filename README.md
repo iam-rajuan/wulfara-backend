@@ -60,7 +60,7 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
    MONGO_URI=your_mongodb_connection_string
 
    JWT_SECRET=your_jwt_secret_key
-   JWT_EXPIRE=30d
+   JWT_EXPIRES_IN=30d
 
    AWS_REGION=your_aws_region
    AWS_ACCESS_KEY_ID=your_aws_access_key
@@ -68,7 +68,22 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
    AWS_S3_BUCKET_NAME=your_bucket_name
 
    RESEND_API_KEY=your_resend_api_key
-   EMAIL_FROM=onboarding@resend.dev
+   RESEND_FROM_EMAIL=Wulfara Support <noreply@wulfara.space>
+   RESEND_REPLY_TO=support@wulfara.space
+
+   SUPER_ADMIN_SEED_NAME=
+   SUPER_ADMIN_SEED_EMAIL=support@example.com
+   SUPER_ADMIN_SEED_PASSWORD=change_me
+   SUPER_ADMIN_SEED_NAME_2=
+   SUPER_ADMIN_SEED_EMAIL_2=founder@example.com
+   SUPER_ADMIN_SEED_PASSWORD_2=change_me
+   SUPER_ADMIN_LOCKED_EMAILS=support@example.com,founder@example.com,legacy-admin@example.com
+
+   ADMIN_SEED_NAME=
+   ADMIN_SEED_EMAIL=admin@example.com
+   ADMIN_SEED_PASSWORD=change_me
+   ADMIN_SEED_ROLE_SLUG=admin
+   ADMIN_SEED_SYNC_ON_START=false
    ```
 
 3. Run the server:
@@ -79,6 +94,13 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
    # Run in production mode
    npm start
    ```
+
+4. Seed or sync the admin account from `.env`:
+   ```bash
+   npm run seed:admin
+   ```
+
+   Set `ADMIN_SEED_SYNC_ON_START=true` if you want the backend to keep the admin email/password in sync with `.env` every time the server starts.
 
 ## 🔒 API Security & Architecture
 - **Role-Based Access Control (RBAC)**: Strict `protect` and `authorize` middlewares separate Buyer, Supplier, and Admin capabilities.

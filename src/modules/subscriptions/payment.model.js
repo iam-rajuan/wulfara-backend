@@ -6,6 +6,28 @@ const paymentSchema = new mongoose.Schema({
     ref: 'Supplier',
     required: true
   },
+  stripeSessionId: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+  plan: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'PricingPlan',
+    default: null
+  },
+  planName: {
+    type: String,
+    default: ''
+  },
+  billingCycle: {
+    type: String,
+    default: ''
+  },
+  listingPeriod: {
+    type: String,
+    default: ''
+  },
   amount: {
     type: Number,
     required: true

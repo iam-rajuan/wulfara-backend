@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const User = require('../modules/users/user.model');
+const { getEffectivePermissions, isSuperAdminRole } = require('../modules/adminRoles/adminRole.service');
 
 // Protect routes
 exports.protect = async (req, res, next) => {
@@ -19,11 +20,17 @@ exports.protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id);
+    req.user = await User.findById(decoded.id).populate('adminRole');
 
     if (!req.user) {
       return res.status(401).json({ success: false, message: 'Not authorized, user no longer exists' });
     }
+
+    req.userPermissions = getEffectivePermissions(req.user);
+    req.isSuperAdmin =
+      req.user.role === 'admin'
+        ? !req.user.adminRole || isSuperAdminRole(req.user.adminRole)
+        : false;
 
     if (req.user.isActive === false) {
       return res.status(403).json({ success: false, message: 'Your account has been suspended. Please contact support.' });
@@ -46,6 +53,41 @@ exports.authorize = (...roles) => {
   };
 };
 
+exports.authorizePermissions = (...permissions) => {
+  return (req, res, next) => {
+    if (req.user.role !== 'admin') {
+      return res.status(403).json({ success: false, message: 'Only admin users can access this route' });
+    }
+
+    if (req.isSuperAdmin) {
+      return next();
+    }
+
+    const missingPermissions = permissions.filter(
+      (permission) => !req.userPermissions.includes(permission)
+    );
+
+    if (missingPermissions.length > 0) {
+      return res.status(403).json({
+        success: false,
+        message: `Missing required permission: ${missingPermissions[0]}`,
+      });
+    }
+
+    next();
+  };
+};
+
+exports.authorizeAdminPermissions = (...permissions) => {
+  return (req, res, next) => {
+    if (req.user.role !== 'admin') {
+      return next();
+    }
+
+    return exports.authorizePermissions(...permissions)(req, res, next);
+  };
+};
+
 // Optional auth for public routes that behave differently for admins
 exports.protectOptional = async (req, res, next) => {
   let token;
@@ -61,7 +103,12 @@ exports.protectOptional = async (req, res, next) => {
   if (token) {
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      req.user = await User.findById(decoded.id);
+      req.user = await User.findById(decoded.id).populate('adminRole');
+      req.userPermissions = getEffectivePermissions(req.user);
+      req.isSuperAdmin =
+        req.user?.role === 'admin'
+          ? !req.user.adminRole || isSuperAdminRole(req.user.adminRole)
+          : false;
     } catch (err) {
       // Ignore errors for optional auth
     }

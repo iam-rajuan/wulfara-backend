@@ -3,11 +3,12 @@ const cors = require('cors');
 const helmet = require('helmet');
 const path = require('path');
 const { requestLogger, logger } = require('./utils/logger');
+const { buildCorsOriginHandler } = require('./utils/origins');
 
 const app = express();
 
 const corsOptions = {
-  origin: true,
+  origin: buildCorsOriginHandler(),
   credentials: true,
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
@@ -51,6 +52,7 @@ const reportRoutes = require('./modules/reports/report.routes');
 const messageRoutes = require('./modules/messages/message.routes');
 const notificationRoutes = require('./modules/notifications/notification.routes');
 const reviewRoutes = require('./modules/reviews/review.routes');
+const adminRoleRoutes = require('./modules/adminRoles/adminRole.routes');
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', userRoutes);
@@ -65,6 +67,7 @@ app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/messages', messageRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/reviews', reviewRoutes);
+app.use('/api/v1/admin-roles', adminRoleRoutes);
 // 404 Error handler
 app.use((req, res, next) => {
   res.status(404).json({ error: 'Not Found', message: 'The requested resource could not be found' });

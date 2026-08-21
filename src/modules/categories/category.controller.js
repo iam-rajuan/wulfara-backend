@@ -5,7 +5,12 @@ const { generatePresignedUrl } = require('../../utils/s3');
 // @access  Public
 exports.getCategories = async (req, res) => {
   try {
-    const categories = await Category.find();
+    const categories = await Category.find().sort({
+      parentCategory: 1,
+      displayOrder: 1,
+      name: 1,
+      createdAt: 1,
+    });
     res.status(200).json({ success: true, count: categories.length, data: categories });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

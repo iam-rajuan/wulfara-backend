@@ -10,7 +10,7 @@ const {
 } = require('./user.controller');
 
 const router = express.Router();
-const { protect, authorize } = require('../../middlewares/auth');
+const { protect, authorize, authorizePermissions } = require('../../middlewares/auth');
 
 // Protect all routes below
 router.use(protect);
@@ -22,12 +22,12 @@ router.route('/me')
 // Admin only routes below
 router.use(authorize('admin'));
 router.route('/')
-  .get(getUsers)
-  .post(createUser);
+  .get(authorizePermissions('users.read'), getUsers)
+  .post(authorizePermissions('users.manage'), createUser);
 
 router.route('/:id')
-  .get(getUser)
-  .put(updateUser)
-  .delete(deleteUser);
+  .get(authorizePermissions('users.read'), getUser)
+  .put(authorizePermissions('users.manage'), updateUser)
+  .delete(authorizePermissions('users.manage'), deleteUser);
 
 module.exports = router;

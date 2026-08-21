@@ -5,24 +5,9 @@ const generateToken = require('../../utils/generateToken');
 const sendEmail = require('../../utils/sendEmail');
 const crypto = require('crypto');
 const { logger } = require('../../utils/logger');
-
-const getRequestOrigin = (req) => {
-  const origin = req.get('origin');
-  if (origin) {
-    return origin.replace(/\/+$/, '');
-  }
-
-  const referer = req.get('referer');
-  if (referer) {
-    try {
-      return new URL(referer).origin;
-    } catch (error) {
-      logger.warn({ referer, err: error }, 'Invalid referer while resolving request origin');
-    }
-  }
-
-  return null;
-};
+const { resolveAppOrigin } = require('../../utils/origins');
+const { syncSupplierLifecycle } = require('../suppliers/supplierLifecycle');
+const { decorateUserWithAccess } = require('../adminRoles/adminRole.service');
 // @desc     Register user
 // @route    POST /api/v1/auth/register
 // @access   Public
@@ -54,7 +39,6 @@ exports.register = async (req, res) => {
     });
 
     const message = `Your verification code is: <strong>${verifyCode}</strong>`;
-    console.log(`[Email Mock] To: ${normalizedEmail} | Subject: Email Verification Code | Body: ${message}`);
     
     try {
       await sendEmail({ email: normalizedEmail, subject: 'Email Verification Code', html: message });
@@ -106,13 +90,15 @@ exports.verifyEmail = async (req, res) => {
     });
 
     if (user.role === 'supplier') {
-      await Supplier.create({
+      const supplier = await Supplier.create({
         user: user._id,
         companyName: pendingRegistration.companyName || `${pendingRegistration.name} Company`,
         contactEmail: pendingRegistration.email,
         contactPhone: pendingRegistration.phone || "",
         description: "Profile pending details. Please update your company description in settings."
       });
+      syncSupplierLifecycle(supplier);
+      await supplier.save();
     }
 
     await PendingRegistration.findByIdAndDelete(pendingRegistration._id);
@@ -123,6 +109,43 @@ exports.verifyEmail = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+// @desc     Resend Email Verification Code
+// @route    POST /api/v1/auth/resend-verification
+// @access   Public
+exports.resendVerification = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    const pendingRegistration = await PendingRegistration.findOne({ email: normalizedEmail });
+    if (!pendingRegistration) {
+      return res.status(400).json({ success: false, message: 'No registration pending for this email. Please sign up again.' });
+    }
+
+    // Generate a new 6-digit verification code
+    const verifyCode = Math.floor(100000 + Math.random() * 900000).toString();
+    pendingRegistration.verifyCode = verifyCode;
+    pendingRegistration.expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await pendingRegistration.save();
+
+    const message = `Your verification code is: <strong>${verifyCode}</strong>`;
+    
+    try {
+      await sendEmail({ email: normalizedEmail, subject: 'Email Verification Code', html: message });
+    } catch (err) {
+      return res.status(500).json({ success: false, message: 'Failed to send verification email' });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: 'Verification email sent. Please check your inbox for the code.',
+      email: normalizedEmail
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc     Login user
 // @route    POST /api/v1/auth/login
 // @access   Public
@@ -177,7 +200,8 @@ exports.login = async (req, res) => {
 // @access   Public
 exports.forgotPassword = async (req, res) => {
   try {
-    const user = await User.findOne({ email: req.body.email });
+    const normalizedEmail = req.body.email?.trim().toLowerCase();
+    const user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'There is no user with that email' });
@@ -193,8 +217,14 @@ exports.forgotPassword = async (req, res) => {
     await user.save({ validateBeforeSave: false });
 
     const isDashboard = req.body.isDashboard;
-    const fallbackBaseUrl = isDashboard ? 'http://localhost:5173' : 'http://localhost:3000';
-    const baseUrl = getRequestOrigin(req) || fallbackBaseUrl;
+    const preferredOrigin = isDashboard ? process.env.DASHBOARD_ORIGIN : process.env.WEBSITE_ORIGIN;
+    const baseUrl = resolveAppOrigin(req, preferredOrigin);
+    if (!baseUrl) {
+      return res.status(500).json({
+        success: false,
+        message: `${isDashboard ? 'DASHBOARD_ORIGIN' : 'WEBSITE_ORIGIN'} must be configured before sending password reset emails in production`,
+      });
+    }
     const path = isDashboard ? 'new-password' : 'reset-password';
     const resetUrl = `${baseUrl}/${path}/${resetToken}`;
     const message = `
@@ -260,8 +290,9 @@ exports.resetPassword = async (req, res) => {
 // @access   Private (Admin)
 exports.getUsers = async (req, res) => {
   try {
-    const users = await User.find();
-    res.status(200).json({ success: true, count: users.length, data: users });
+    const users = await User.find().populate('adminRole');
+    const decoratedUsers = await Promise.all(users.map((user) => decorateUserWithAccess(user)));
+    res.status(200).json({ success: true, count: decoratedUsers.length, data: decoratedUsers });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -271,14 +302,14 @@ exports.getUsers = async (req, res) => {
 // @access   Private (Admin)
 exports.updateUserStatus = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const user = await User.findById(req.params.id).populate('adminRole');
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found' });
     }
     user.isActive = req.body.isActive !== undefined ? req.body.isActive : user.isActive;
     await user.save();
 
-    res.status(200).json({ success: true, data: user });
+    res.status(200).json({ success: true, data: await decorateUserWithAccess(user) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -288,8 +319,8 @@ exports.updateUserStatus = async (req, res) => {
 // @access   Private
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
-    res.status(200).json({ success: true, data: user });
+    const user = await User.findById(req.user.id).populate('adminRole');
+    res.status(200).json({ success: true, data: await decorateUserWithAccess(user) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

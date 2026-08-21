@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { PLAN_TIERS, inferPlanTier } = require('./planTier');
 
 const pricingPlanSchema = new mongoose.Schema({
   internalName: {
@@ -34,6 +35,11 @@ const pricingPlanSchema = new mongoose.Schema({
     type: String,
     default: 'Annual (Paid Upfront)'
   },
+  tier: {
+    type: String,
+    enum: PLAN_TIERS,
+    default: 'premium',
+  },
   taxCategory: {
     type: String,
     default: 'Standard Digital Service'
@@ -55,5 +61,9 @@ const pricingPlanSchema = new mongoose.Schema({
     default: true
   }
 }, { timestamps: true });
+
+pricingPlanSchema.pre('validate', function setDefaultTier() {
+  this.tier = inferPlanTier(this);
+});
 
 module.exports = mongoose.model('PricingPlan', pricingPlanSchema);

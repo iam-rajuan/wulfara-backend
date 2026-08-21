@@ -19,7 +19,7 @@ const rfqSchema = new mongoose.Schema({
     type: String,
     required: [true, 'Please provide your email address'],
     match: [
-      /^\w+([\.-]?\w+)*@\w+([\.-]?\w+)*(\.\w{2,3})+$/,
+      /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/,
       'Please add a valid email'
     ]
   },

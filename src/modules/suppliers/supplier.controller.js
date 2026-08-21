@@ -2,6 +2,63 @@ const Supplier = require('./supplier.model');
 const { generatePresignedUrl } = require('../../utils/s3');
 const geocodeAddress = require('../../utils/geocode');
 const { createNotification } = require('../../utils/notificationService');
+const User = require('../users/user.model');
+const Category = require('../categories/category.model');
+const PricingPlan = require('../subscriptions/pricingPlan.model');
+const { inferPlanTier } = require('../subscriptions/planTier');
+const {
+  getOnboardingRoute,
+  hasCompanyInfo,
+  hasIndustrySelection,
+  isSupplierListed,
+  syncSupplierLifecycle,
+} = require('./supplierLifecycle');
+
+const ADMIN_SAFE_USER_SELECT = 'name email role status isVerified';
+
+const normalizeWebsiteUrl = (value = '') => {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `https://${trimmed}`;
+};
+
+const buildOnboardingPayload = (supplier) => {
+  const nextStep = syncSupplierLifecycle(supplier);
+
+  return {
+    step: nextStep,
+    nextRoute: getOnboardingRoute(nextStep),
+    isComplete: nextStep === 'listed',
+  };
+};
+
+const getSupplierForRequest = async (req, options = {}) => {
+  const supplierId =
+    options.supplierId ||
+    req.query?.supplierId ||
+    req.body?.supplierId;
+
+  if (req.user.role === 'admin') {
+    if (!supplierId) {
+      return null;
+    }
+
+    return Supplier.findById(supplierId);
+  }
+
+  return Supplier.findOne({ user: req.user.id });
+};
 
 // @desc    Get all suppliers (with optional category filtering)
 // @route   GET /api/v1/suppliers
@@ -14,7 +71,19 @@ exports.getSuppliers = async (req, res) => {
     const reqQuery = { ...req.query };
 
     // Fields to exclude
-    const removeFields = ['select', 'sort', 'page', 'limit', 'keyword', 'lat', 'lng', 'distance', 'supplierType'];
+    const removeFields = [
+      'select',
+      'sort',
+      'page',
+      'limit',
+      'keyword',
+      'lat',
+      'lng',
+      'distance',
+      'supplierType',
+      'listed',
+      'eligibleForRfq',
+    ];
 
     // Loop over removeFields and delete them from reqQuery
     removeFields.forEach(param => delete reqQuery[param]);
@@ -53,15 +122,32 @@ exports.getSuppliers = async (req, res) => {
       };
     }
 
-    // Only show approved suppliers to public, unless admin is requesting
+    // Only show listed suppliers to the public, unless admin is requesting
     if (!req.user || req.user.role !== 'admin') {
       reqQuery.isApproved = true;
+      reqQuery.listingStatus = 'Approved';
+      reqQuery.subscriptionStatus = 'active';
+      reqQuery.paymentStatus = 'paid';
+    }
+
+    if (req.query.listed === 'true' || req.query.eligibleForRfq === 'true') {
+      reqQuery.isApproved = true;
+      reqQuery.listingStatus = 'Approved';
+      reqQuery.subscriptionStatus = 'active';
+      reqQuery.paymentStatus = 'paid';
     }
 
     query = Supplier.find(reqQuery).populate({
       path: 'categories',
-      select: 'name slug'
+      select: 'name slug parentCategory status'
     });
+
+    if (req.user?.role === 'admin') {
+      query = query.populate({
+        path: 'user',
+        select: ADMIN_SAFE_USER_SELECT
+      });
+    }
 
     const suppliers = await query;
     res.status(200).json({ success: true, count: suppliers.length, data: suppliers });
@@ -75,17 +161,28 @@ exports.getSuppliers = async (req, res) => {
 // @access  Public
 exports.getSupplier = async (req, res) => {
   try {
-    const supplier = await Supplier.findById(req.params.id).populate({
+    let query = Supplier.findById(req.params.id).populate({
       path: 'categories',
-      select: 'name slug'
+      select: 'name slug parentCategory status'
     });
+
+    if (req.user?.role === 'admin') {
+      query = query.populate({
+        path: 'user',
+        select: ADMIN_SAFE_USER_SELECT
+      });
+    }
+
+    const supplier = await query;
 
     if (!supplier) {
       return res.status(404).json({ success: false, message: 'Supplier not found' });
     }
     
-    // If not approved, only admin or the supplier themselves can view it
-    if (!supplier.isApproved) {
+    const publiclyVisible = isSupplierListed(supplier);
+
+    // If not listed yet, only admin or the supplier themselves can view it
+    if (!publiclyVisible) {
         if (!req.user || (req.user.role !== 'admin' && req.user.id !== supplier.user.toString())) {
             return res.status(403).json({ success: false, message: 'Supplier profile is pending approval' });
         }
@@ -113,6 +210,7 @@ exports.createSupplierProfile = async (req, res) => {
   try {
     // Add user to req.body
     req.body.user = req.user.id;
+    req.body.website = normalizeWebsiteUrl(req.body.website);
 
     // Check if user already has a published profile
     const existingProfile = await Supplier.findOne({ user: req.user.id });
@@ -139,6 +237,8 @@ exports.createSupplierProfile = async (req, res) => {
     }
 
     const supplier = await Supplier.create(req.body);
+    syncSupplierLifecycle(supplier);
+    await supplier.save();
     res.status(201).json({ success: true, data: supplier });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -161,9 +261,30 @@ exports.updateSupplierProfile = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized to update this profile' });
     }
 
-    // Don't allow regular users to approve their own profiles
-    if (req.user.role !== 'admin' && req.body.isApproved) {
-      delete req.body.isApproved;
+    // Don't allow regular users to modify protected lifecycle fields
+    if (req.user.role !== 'admin') {
+      [
+        'isApproved',
+        'listingStatus',
+        'onboardingStep',
+        'onboardingCompletedAt',
+        'subscriptionStatus',
+        'paymentStatus',
+        'subscriptionPlan',
+        'selectedPlan',
+        'selectedBillingCycle',
+        'selectedListingPeriod',
+        'stripeCustomerId',
+        'user',
+      ].forEach((field) => {
+        if (field in req.body) {
+          delete req.body[field];
+        }
+      });
+    }
+
+    if ('website' in req.body) {
+      req.body.website = normalizeWebsiteUrl(req.body.website);
     }
 
     // Geocode address if provided
@@ -188,6 +309,9 @@ exports.updateSupplierProfile = async (req, res) => {
       new: true,
       runValidators: true
     });
+
+    syncSupplierLifecycle(supplier);
+    await supplier.save();
 
     res.status(200).json({ success: true, data: supplier });
   } catch (error) {
@@ -288,12 +412,17 @@ exports.getSupplierDashboard = async (req, res) => {
       });
     }
 
+    const onboarding = buildOnboardingPayload(supplierProfile);
+    await supplierProfile.save();
+
     const dashboardData = {
       totalRfqs,
       pendingRfqs,
       profileCompletion: `${profileCompletionPercentage}%`,
       subscriptionPlan: supplierProfile.subscriptionPlan,
       isApproved: supplierProfile.isApproved,
+      subscriptionStatus: supplierProfile.subscriptionStatus,
+      paymentStatus: supplierProfile.paymentStatus,
       analytics
     };
 
@@ -301,7 +430,8 @@ exports.getSupplierDashboard = async (req, res) => {
       success: true, 
       data: {
         profile: supplierProfile,
-        stats: dashboardData
+        stats: dashboardData,
+        onboarding
       }
     });
   } catch (error) {
@@ -328,6 +458,7 @@ exports.reviewSupplier = async (req, res) => {
       supplier.listingStatus = req.body.isApproved ? 'Approved' : 'Pending';
     }
 
+    syncSupplierLifecycle(supplier);
     await supplier.save();
 
     if (supplier.user) {
@@ -361,6 +492,260 @@ exports.featureSupplier = async (req, res) => {
     await supplier.save();
 
     res.status(200).json({ success: true, data: supplier });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get onboarding status for the current supplier or admin-assisted supplier
+// @route   GET /api/v1/suppliers/onboarding
+// @access  Private (Supplier/Admin)
+exports.getOnboardingStatus = async (req, res) => {
+  try {
+    const supplier = await getSupplierForRequest(req);
+
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+    }
+
+    let query = Supplier.findById(supplier._id)
+      .populate('selectedPlan')
+      .populate({ path: 'categories', select: 'name slug parentCategory status' });
+
+    if (req.user.role === 'admin') {
+      query = query.populate({ path: 'user', select: ADMIN_SAFE_USER_SELECT });
+    }
+
+    const populatedSupplier = await query;
+
+    const onboarding = buildOnboardingPayload(populatedSupplier);
+    await populatedSupplier.save();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        supplier: populatedSupplier,
+        onboarding,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Save supplier industry/category selection during onboarding
+// @route   PUT /api/v1/suppliers/onboarding/industry
+// @access  Private (Supplier/Admin)
+exports.saveOnboardingIndustry = async (req, res) => {
+  try {
+    const supplier = await getSupplierForRequest(req);
+
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+    }
+
+    const { categoryIds = [] } = req.body;
+    if (!Array.isArray(categoryIds) || categoryIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'Please select at least one industry category' });
+    }
+
+    const categories = await Category.find({ _id: { $in: categoryIds }, status: 'Active' }).select('_id');
+    if (categories.length !== categoryIds.length) {
+      return res.status(400).json({ success: false, message: 'One or more selected categories are invalid or inactive' });
+    }
+
+    supplier.categories = categories.map((category) => category._id);
+    const onboarding = buildOnboardingPayload(supplier);
+    await supplier.save();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        supplier,
+        onboarding,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Save supplier company details during onboarding
+// @route   PUT /api/v1/suppliers/onboarding/company-info
+// @access  Private (Supplier/Admin)
+exports.saveOnboardingCompanyInfo = async (req, res) => {
+  try {
+    const supplier = await getSupplierForRequest(req);
+
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+    }
+
+    const {
+      companyName,
+      description,
+      contactEmail,
+      contactPhone,
+      website,
+      address,
+      supplierType,
+      coreProducts,
+    } = req.body;
+
+    if (!companyName || !description || !contactEmail || !contactPhone || !address) {
+      return res.status(400).json({
+        success: false,
+        message: 'Company name, description, contact email, contact phone, and address are required',
+      });
+    }
+
+    supplier.companyName = companyName;
+    supplier.description = description;
+    supplier.contactEmail = contactEmail.trim().toLowerCase();
+    supplier.contactPhone = contactPhone;
+    supplier.website = normalizeWebsiteUrl(website);
+    if (supplierType) {
+      supplier.supplierType = supplierType;
+    }
+
+    if (Array.isArray(coreProducts)) {
+      supplier.coreProducts = coreProducts.filter(Boolean);
+    } else if (typeof coreProducts === 'string') {
+      supplier.coreProducts = coreProducts
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    }
+
+    const geoResult = await geocodeAddress(address);
+    supplier.location = geoResult
+      ? {
+          type: 'Point',
+          coordinates: geoResult.coordinates,
+          formattedAddress: geoResult.formattedAddress,
+        }
+      : {
+          type: 'Point',
+          coordinates: [0, 0],
+          formattedAddress: address,
+        };
+
+    const onboarding = buildOnboardingPayload(supplier);
+    await supplier.save();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        supplier,
+        onboarding,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Save selected subscription plan during onboarding
+// @route   PUT /api/v1/suppliers/onboarding/subscription
+// @access  Private (Supplier/Admin)
+exports.saveOnboardingSubscription = async (req, res) => {
+  try {
+    const supplier = await getSupplierForRequest(req);
+
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+    }
+
+    if (!hasIndustrySelection(supplier)) {
+      return res.status(400).json({ success: false, message: 'Complete industry selection before choosing a subscription plan' });
+    }
+
+    if (!hasCompanyInfo(supplier)) {
+      return res.status(400).json({ success: false, message: 'Complete company information before choosing a subscription plan' });
+    }
+
+    const { planId, billingCycle = '', listingPeriod = '' } = req.body;
+    if (!planId) {
+      return res.status(400).json({ success: false, message: 'Please select a subscription plan' });
+    }
+
+    const plan = await PricingPlan.findOne({ _id: planId, isActive: true });
+    if (!plan) {
+      return res.status(404).json({ success: false, message: 'Selected pricing plan was not found or is inactive' });
+    }
+
+    supplier.selectedPlan = plan._id;
+    supplier.selectedBillingCycle = billingCycle || plan.billingCycle || '';
+    supplier.selectedListingPeriod = listingPeriod || '';
+    supplier.subscriptionPlan = inferPlanTier(plan);
+    supplier.subscriptionStatus = 'pending';
+    supplier.paymentStatus = supplier.paymentStatus === 'paid' ? supplier.paymentStatus : 'unpaid';
+
+    const onboarding = buildOnboardingPayload(supplier);
+    await supplier.save();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        supplier,
+        plan,
+        onboarding,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Create a supplier account in admin-assisted mode
+// @route   POST /api/v1/suppliers/admin-assisted
+// @access  Private (Admin)
+exports.createAdminAssistedSupplier = async (req, res) => {
+  try {
+    const { name, email, password, companyName, phone } = req.body;
+    const normalizedEmail = email?.trim().toLowerCase();
+
+    if (!name || !normalizedEmail || !password) {
+      return res.status(400).json({ success: false, message: 'Name, email, and password are required' });
+    }
+
+    const existingUser = await User.findOne({ email: normalizedEmail });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'A user with this email already exists' });
+    }
+
+    const user = await User.create({
+      name,
+      email: normalizedEmail,
+      password,
+      role: 'supplier',
+      isVerified: true,
+      status: 'Active',
+    });
+
+    const supplier = await Supplier.create({
+      user: user._id,
+      companyName: companyName || `${name} Company`,
+      contactEmail: normalizedEmail,
+      contactPhone: phone || '',
+      description: 'Profile pending details. Please update your company description in settings.',
+    });
+
+    const onboarding = buildOnboardingPayload(supplier);
+    await supplier.save();
+
+    const hydratedSupplier = await Supplier.findById(supplier._id).populate({
+      path: 'user',
+      select: ADMIN_SAFE_USER_SELECT,
+    });
+
+    res.status(201).json({
+      success: true,
+      data: {
+        supplier: hydratedSupplier,
+        onboarding,
+      },
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

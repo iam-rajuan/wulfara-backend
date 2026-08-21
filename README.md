@@ -71,6 +71,11 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
    RESEND_FROM_EMAIL=Wulfara Support <noreply@wulfara.space>
    RESEND_REPLY_TO=support@wulfara.space
 
+   STRIPE_SECRET_KEY=your_stripe_secret_key
+   STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
+   WEBSITE_ORIGIN=https://www.your-website.com
+   DASHBOARD_ORIGIN=https://dashboard.your-website.com
+
    SUPER_ADMIN_SEED_NAME=
    SUPER_ADMIN_SEED_EMAIL=support@example.com
    SUPER_ADMIN_SEED_PASSWORD=change_me
@@ -101,6 +106,15 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
    ```
 
    Set `ADMIN_SEED_SYNC_ON_START=true` if you want the backend to keep the admin email/password in sync with `.env` every time the server starts.
+
+### Stripe webhook setup
+
+- The checkout session endpoint is `POST /api/v1/subscriptions/checkout-session`.
+- The Stripe webhook endpoint is `POST /api/v1/subscriptions/webhook`.
+- A compatibility alias is also available at `POST /webhooks/stripe` if your Stripe endpoint is already pointed there.
+- In local development with ngrok, point Stripe to `https://<your-ngrok-host>/api/v1/subscriptions/webhook` or `https://<your-ngrok-host>/webhooks/stripe`.
+- `STRIPE_SECRET_KEY` is required to create checkout sessions.
+- `STRIPE_WEBHOOK_SECRET` is required to verify Stripe webhook signatures safely.
 
 ## 🔒 API Security & Architecture
 - **Role-Based Access Control (RBAC)**: Strict `protect` and `authorize` middlewares separate Buyer, Supplier, and Admin capabilities.

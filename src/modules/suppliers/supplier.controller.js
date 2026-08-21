@@ -10,6 +10,7 @@ const {
   getOnboardingRoute,
   hasCompanyInfo,
   hasIndustrySelection,
+  deriveListingPeriod,
   isSupplierListed,
   syncSupplierLifecycle,
 } = require('./supplierLifecycle');
@@ -674,9 +675,12 @@ exports.saveOnboardingSubscription = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Selected pricing plan was not found or is inactive' });
     }
 
+    const resolvedBillingCycle = billingCycle || plan.billingCycle || '';
+    const resolvedListingPeriod = listingPeriod || deriveListingPeriod(resolvedBillingCycle, supplier.selectedListingPeriod);
+
     supplier.selectedPlan = plan._id;
-    supplier.selectedBillingCycle = billingCycle || plan.billingCycle || '';
-    supplier.selectedListingPeriod = listingPeriod || '';
+    supplier.selectedBillingCycle = resolvedBillingCycle;
+    supplier.selectedListingPeriod = resolvedListingPeriod;
     supplier.subscriptionPlan = inferPlanTier(plan);
     supplier.subscriptionStatus = 'pending';
     supplier.paymentStatus = supplier.paymentStatus === 'paid' ? supplier.paymentStatus : 'unpaid';

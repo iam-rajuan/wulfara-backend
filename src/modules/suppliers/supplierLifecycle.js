@@ -43,6 +43,32 @@ const hasSelectedPlan = (supplier) =>
         (supplier.subscriptionPlan && supplier.subscriptionPlan !== 'free'))
   );
 
+const deriveListingPeriod = (billingCycle = '', fallback = '') => {
+  const normalizedBillingCycle = String(billingCycle || '').trim().toLowerCase();
+
+  if (!normalizedBillingCycle) {
+    return fallback || '';
+  }
+
+  if (normalizedBillingCycle.includes('month')) {
+    return '1 Month';
+  }
+
+  if (normalizedBillingCycle.includes('quarter')) {
+    return '3 Months';
+  }
+
+  if (normalizedBillingCycle.includes('semi') || normalizedBillingCycle.includes('6')) {
+    return '6 Months';
+  }
+
+  if (normalizedBillingCycle.includes('annual') || normalizedBillingCycle.includes('year') || normalizedBillingCycle.includes('12')) {
+    return '12 Months';
+  }
+
+  return fallback || billingCycle;
+};
+
 const isSupplierListed = (supplier) =>
   Boolean(
     supplier &&
@@ -94,7 +120,7 @@ const getOnboardingRoute = (step) => {
     case ONBOARDING_STEPS.SUBSCRIPTION:
       return '/subscription';
     case ONBOARDING_STEPS.PAYMENT:
-      return '/listing-period';
+      return '/subscription';
     case ONBOARDING_STEPS.LISTED:
     default:
       return '/dashboard';
@@ -108,6 +134,7 @@ module.exports = {
   hasCompanyInfo,
   hasIndustrySelection,
   hasSelectedPlan,
+  deriveListingPeriod,
   isSupplierListed,
   syncSupplierLifecycle,
 };

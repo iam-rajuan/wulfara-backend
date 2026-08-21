@@ -21,8 +21,9 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 const { stripeWebhook } = require('./modules/subscriptions/subscription.controller');
 
-// Stripe Webhook MUST be registered before express.json() so it can access the raw body
+// Stripe webhook endpoints must be registered before express.json() so they can access the raw body.
 app.post('/api/v1/subscriptions/webhook', express.raw({ type: 'application/json' }), stripeWebhook);
+app.post('/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhook);
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));

@@ -49,13 +49,30 @@ describe('subscription and stripe flow', () => {
     expect(latestCall.success_url).toBe(
       'https://dashboard.wulfara.test/listed?session_id={CHECKOUT_SESSION_ID}'
     );
-    expect(latestCall.cancel_url).toBe('https://dashboard.wulfara.test/subscription');
+    expect(latestCall.cancel_url).toBe('https://dashboard.wulfara.test/subscription?cancelled=1');
 
     const refreshedSupplier = await Supplier.findById(supplier._id);
     expect(refreshedSupplier.selectedPlan.toString()).toBe(plan._id.toString());
     expect(refreshedSupplier.subscriptionStatus).toBe('pending');
     expect(refreshedSupplier.paymentStatus).toBe('pending');
     expect(refreshedSupplier.onboardingStep).toBe('payment');
+  });
+
+  it('derives billing and listing metadata from the pricing plan when the frontend sends only the plan id', async () => {
+    const { plan, user, supplier } = await createCheckoutReadySupplier();
+
+    await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({
+        planId: plan._id.toString(),
+      })
+      .expect(200);
+
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+
+    expect(refreshedSupplier.selectedBillingCycle).toBe(plan.billingCycle);
+    expect(refreshedSupplier.selectedListingPeriod).toBe('12 Months');
   });
 
   it('activates suppliers exactly once on successful webhook delivery and keeps wrong metadata from activating the wrong supplier', async () => {
@@ -156,5 +173,39 @@ describe('subscription and stripe flow', () => {
     expect(refreshedSupplier.paymentStatus).toBe('pending');
     expect(refreshedSupplier.isApproved).toBe(false);
     expect(await Payment.countDocuments()).toBe(0);
+  });
+
+  it('accepts the legacy stripe webhook alias path', async () => {
+    const { plan, supplier } = await createCheckoutReadySupplier();
+
+    const event = {
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_alias',
+          client_reference_id: supplier._id.toString(),
+          amount_total: 49900,
+          customer: 'cus_test_alias',
+          metadata: {
+            supplierId: supplier._id.toString(),
+            planId: plan._id.toString(),
+            planName: 'Premium',
+            billingCycle: 'Annual',
+            listingPeriod: '12-months',
+          },
+        },
+      },
+    };
+
+    await request(app)
+      .post('/webhooks/stripe')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify(event))
+      .expect(200);
+
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+
+    expect(refreshedSupplier.subscriptionStatus).toBe('active');
+    expect(refreshedSupplier.paymentStatus).toBe('paid');
   });
 });

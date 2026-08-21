@@ -8,6 +8,7 @@ const { resolveAppOrigin } = require('../../utils/origins');
 const {
   hasCompanyInfo,
   hasIndustrySelection,
+  deriveListingPeriod,
   syncSupplierLifecycle,
 } = require('../suppliers/supplierLifecycle');
 
@@ -24,10 +25,10 @@ const getSupplierForCheckout = async (req) => {
 // @access  Private (Supplier only)
 exports.createCheckoutSession = async (req, res) => {
   try {
-    const { planId, billingCycle, listingPeriod = '' } = req.body;
+    const { planId, billingCycle = '', listingPeriod = '' } = req.body;
     
-    if (!planId || !billingCycle) {
-      return res.status(400).json({ success: false, message: 'Please provide planId and billingCycle' });
+    if (!planId) {
+      return res.status(400).json({ success: false, message: 'Please provide planId' });
     }
 
     const supplierProfile = await getSupplierForCheckout(req);
@@ -52,10 +53,14 @@ exports.createCheckoutSession = async (req, res) => {
     }
 
     const price = plan.price;
+    const resolvedBillingCycle =
+      billingCycle || supplierProfile.selectedBillingCycle || plan.billingCycle || '';
+    const resolvedListingPeriod =
+      listingPeriod || supplierProfile.selectedListingPeriod || deriveListingPeriod(resolvedBillingCycle);
 
     supplierProfile.selectedPlan = plan._id;
-    supplierProfile.selectedBillingCycle = billingCycle;
-    supplierProfile.selectedListingPeriod = listingPeriod;
+    supplierProfile.selectedBillingCycle = resolvedBillingCycle;
+    supplierProfile.selectedListingPeriod = resolvedListingPeriod;
     supplierProfile.subscriptionPlan = inferPlanTier(plan);
     supplierProfile.subscriptionStatus = 'pending';
     supplierProfile.paymentStatus = 'pending';
@@ -76,8 +81,8 @@ exports.createCheckoutSession = async (req, res) => {
         : '?session_id={CHECKOUT_SESSION_ID}';
     const cancelQuery =
       req.user.role === 'admin'
-        ? `?supplierId=${supplierProfile._id.toString()}&mode=admin_assisted`
-        : '';
+        ? `?cancelled=1&supplierId=${supplierProfile._id.toString()}&mode=admin_assisted`
+        : '?cancelled=1';
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -86,7 +91,7 @@ exports.createCheckoutSession = async (req, res) => {
           price_data: {
             currency: 'usd',
             product_data: {
-              name: `WULFARA ${plan.name} Plan - ${billingCycle}`,
+              name: `WULFARA ${plan.name} Plan - ${resolvedBillingCycle || 'One-Time Payment'}`,
               description: plan.description || 'B2B Marketplace Supplier Subscription'
             },
             unit_amount: Math.round(price * 100), // Stripe expects amounts in cents
@@ -103,8 +108,8 @@ exports.createCheckoutSession = async (req, res) => {
         planId: plan._id.toString(),
         planName: plan.name,
         planTier: inferPlanTier(plan),
-        billingCycle,
-        listingPeriod,
+        billingCycle: resolvedBillingCycle,
+        listingPeriod: resolvedListingPeriod,
       }
     });
 

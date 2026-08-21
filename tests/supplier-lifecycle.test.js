@@ -153,7 +153,7 @@ describe('supplier lifecycle acceptance', () => {
       .expect(({ body }) => {
         expect(body.data.onboarding).toMatchObject({
           step: 'payment',
-          nextRoute: '/listing-period',
+          nextRoute: '/subscription',
           isComplete: false,
         });
       });
@@ -191,7 +191,7 @@ describe('supplier lifecycle acceptance', () => {
       },
       {
         step: 'payment',
-        expectedRoute: '/listing-period',
+        expectedRoute: '/subscription',
         supplier: {
           categories: [category._id],
           selectedPlan: plan._id,
@@ -289,6 +289,7 @@ describe('supplier lifecycle acceptance', () => {
       .expect(200)
       .expect(({ body }) => {
         expect(body.data.onboarding.step).toBe('payment');
+        expect(body.data.onboarding.nextRoute).toBe('/subscription');
       });
 
     assistedSupplier = await Supplier.findById(supplierId);
@@ -297,5 +298,42 @@ describe('supplier lifecycle acceptance', () => {
     expect(assistedSupplier.selectedPlan.toString()).toBe(plan._id.toString());
     expect(assistedSupplier.subscriptionStatus).toBe('pending');
     expect(assistedSupplier.onboardingStep).toBe('payment');
+  });
+
+  it('does not send suppliers into obsolete cart or listing-period onboarding routes', async () => {
+    const category = await createCategory({ name: 'Obsolete Flow Category' });
+    const plan = await createPricingPlan({ name: 'Simplified Plan', slug: 'simplified-plan' });
+    const { token, supplier } = await registerAndVerifySupplier();
+
+    supplier.categories = [category._id];
+    supplier.description = 'Completed profile description';
+    supplier.contactPhone = '+15550007777';
+    supplier.location = {
+      type: 'Point',
+      coordinates: [90.4125, 23.8103],
+      formattedAddress: 'Dhaka, Bangladesh',
+    };
+    supplier.selectedPlan = plan._id;
+    supplier.selectedBillingCycle = 'Annual';
+    supplier.subscriptionStatus = 'pending';
+    supplier.paymentStatus = 'unpaid';
+    await supplier.save();
+
+    const response = await request(app)
+      .get('/api/v1/suppliers/onboarding')
+      .set(authHeader(token))
+      .expect(200);
+
+    expect(response.body.data.onboarding.step).toBe('payment');
+    expect(response.body.data.onboarding.nextRoute).toBe('/subscription');
+  });
+
+  it('blocks buyer accounts from supplier onboarding endpoints', async () => {
+    const buyer = await createUser({ role: 'buyer', email: uniqueEmail('buyer') });
+
+    await request(app)
+      .get('/api/v1/suppliers/onboarding')
+      .set(authHeader(tokenForUser(buyer)))
+      .expect(403);
   });
 });

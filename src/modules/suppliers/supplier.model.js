@@ -140,6 +140,10 @@ const supplierSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  selectedAddons: {
+    type: [String],
+    default: []
+  },
   subscriptionStatus: {
     type: String,
     enum: ['inactive', 'pending', 'active', 'cancelled', 'failed'],
@@ -161,6 +165,16 @@ const supplierSchema = new mongoose.Schema({
   },
   stripeCustomerId: {
     type: String
+  },
+  featuredHeroPlacement: {
+    enabled: {
+      type: Boolean,
+      default: false
+    },
+    activatedAt: {
+      type: Date,
+      default: null
+    }
   },
   isFeatured: {
     type: Boolean,

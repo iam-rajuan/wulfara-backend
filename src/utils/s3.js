@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 const crypto = require('crypto');
 
@@ -27,4 +27,14 @@ exports.generatePresignedUrl = async (folder, contentType) => {
     uploadUrl,
     fileUrl: `https://${process.env.AWS_S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${filename}`
   };
+};
+
+exports.generatePresignedDownloadUrl = async (key) => {
+  const command = new GetObjectCommand({
+    Bucket: process.env.AWS_S3_BUCKET_NAME,
+    Key: key
+  });
+
+  // Expire in 15 minutes
+  return await getSignedUrl(s3Client, command, { expiresIn: 900 });
 };

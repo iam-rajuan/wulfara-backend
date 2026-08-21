@@ -6,7 +6,8 @@ const {
   updateUser,
   deleteUser,
   getMe,
-  updateMe
+  updateMe,
+  getUploadUrl
 } = require('./user.controller');
 
 const router = express.Router();
@@ -18,6 +19,8 @@ router.use(protect);
 router.route('/me')
   .get(getMe)
   .put(updateMe);
+
+router.post('/upload-url', getUploadUrl);
 
 // Admin only routes below
 router.use(authorize('admin'));

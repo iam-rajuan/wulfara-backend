@@ -6,6 +6,11 @@ const PricingPlan = require('./pricingPlan.model');
 const { inferPlanTier } = require('./planTier');
 const { resolveAppOrigin } = require('../../utils/origins');
 const {
+  FEATURED_HERO_PLACEMENT,
+  resolveSubscriptionAddons,
+  sumAddonAmount,
+} = require('./subscriptionAddons');
+const {
   hasCompanyInfo,
   hasIndustrySelection,
   deriveListingPeriod,
@@ -52,7 +57,18 @@ exports.createCheckoutSession = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Selected pricing plan was not found or is inactive' });
     }
 
-    const price = plan.price;
+    const { addons, unsupportedCodes } = resolveSubscriptionAddons(req.body);
+
+    if (unsupportedCodes.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Unsupported add-on selection: ${unsupportedCodes.join(', ')}`,
+      });
+    }
+
+    const basePrice = Number(plan.price || 0);
+    const addonPrice = sumAddonAmount(addons);
+    const totalPrice = basePrice + addonPrice;
     const resolvedBillingCycle = plan.billingCycle || '';
     const resolvedListingPeriod = deriveListingPeriod(
       resolvedBillingCycle,
@@ -62,6 +78,7 @@ exports.createCheckoutSession = async (req, res) => {
     supplierProfile.selectedPlan = plan._id;
     supplierProfile.selectedBillingCycle = resolvedBillingCycle;
     supplierProfile.selectedListingPeriod = resolvedListingPeriod;
+    supplierProfile.selectedAddons = addons.map((addon) => addon.code);
     supplierProfile.subscriptionPlan = inferPlanTier(plan);
     supplierProfile.subscriptionStatus = 'pending';
     supplierProfile.paymentStatus = 'pending';
@@ -85,21 +102,37 @@ exports.createCheckoutSession = async (req, res) => {
         ? `?cancelled=1&supplierId=${supplierProfile._id.toString()}&mode=admin_assisted`
         : '?cancelled=1';
 
+    const lineItems = [
+      {
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: `WULFARA ${plan.name} Plan - ${resolvedBillingCycle || 'One-Time Payment'}`,
+            description: plan.description || 'B2B Marketplace Supplier Subscription'
+          },
+          unit_amount: Math.round(basePrice * 100),
+        },
+        quantity: 1,
+      },
+    ];
+
+    addons.forEach((addon) => {
+      lineItems.push({
+        price_data: {
+          currency: 'usd',
+          product_data: {
+            name: addon.name,
+            description: addon.description,
+          },
+          unit_amount: Math.round(Number(addon.price || 0) * 100),
+        },
+        quantity: 1,
+      });
+    });
+
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
-      line_items: [
-        {
-          price_data: {
-            currency: 'usd',
-            product_data: {
-              name: `WULFARA ${plan.name} Plan - ${resolvedBillingCycle || 'One-Time Payment'}`,
-              description: plan.description || 'B2B Marketplace Supplier Subscription'
-            },
-            unit_amount: Math.round(price * 100), // Stripe expects amounts in cents
-          },
-          quantity: 1,
-        },
-      ],
+      line_items: lineItems,
       mode: 'payment', // Use 'payment' for one-time or 'subscription' if using Stripe Billing
       success_url: `${appOrigin}/listed${adminAssistedQuery}`,
       cancel_url: `${appOrigin}/subscription${cancelQuery}`,
@@ -111,7 +144,32 @@ exports.createCheckoutSession = async (req, res) => {
         planTier: inferPlanTier(plan),
         billingCycle: resolvedBillingCycle,
         listingPeriod: resolvedListingPeriod,
+        addons: JSON.stringify(addons.map((addon) => addon.code)),
+        featuredHeroPlacement: String(
+          addons.some((addon) => addon.code === FEATURED_HERO_PLACEMENT.code)
+        ),
+        featuredHeroPlacementAmount: String(
+          addons.find((addon) => addon.code === FEATURED_HERO_PLACEMENT.code)?.price || 0
+        ),
       }
+    });
+
+    await Payment.create({
+      supplier: supplierProfile._id,
+      stripeSessionId: session.id,
+      plan: plan._id,
+      planName: plan.name,
+      billingCycle: resolvedBillingCycle,
+      listingPeriod: resolvedListingPeriod,
+      addons: addons.map((addon) => ({
+        code: addon.code,
+        name: addon.name,
+        amount: addon.price,
+      })),
+      baseAmount: basePrice,
+      addonAmount: addonPrice,
+      amount: totalPrice,
+      status: 'pending',
     });
 
     res.status(200).json({
@@ -123,8 +181,14 @@ exports.createCheckoutSession = async (req, res) => {
         planName: plan.name,
         billingCycle: resolvedBillingCycle,
         listingPeriod: resolvedListingPeriod,
-        basePrice: price,
-        totalDueToday: price,
+        addons: addons.map((addon) => ({
+          code: addon.code,
+          name: addon.name,
+          amount: addon.price,
+        })),
+        basePrice,
+        addonPrice,
+        totalDueToday: totalPrice,
       },
     });
   } catch (error) {
@@ -169,35 +233,85 @@ exports.stripeWebhook = async (req, res) => {
       const supplierProfile = await Supplier.findById(supplierId);
       if (supplierProfile) {
         const existingPayment = await Payment.findOne({ stripeSessionId: session.id });
-        if (existingPayment) {
+        if (existingPayment?.status === 'paid') {
           return res.status(200).json({ received: true, duplicate: true });
         }
 
         const selectedPlan = planId ? await PricingPlan.findById(planId) : null;
+        let metadataAddons = [];
+        if (session.metadata?.addons) {
+          try {
+            metadataAddons = JSON.parse(session.metadata.addons);
+          } catch (error) {
+            metadataAddons = [];
+          }
+        }
+        const resolvedAddonSelection = resolveSubscriptionAddons({
+          addons: metadataAddons,
+          featuredHeroPlacement: session.metadata?.featuredHeroPlacement === 'true',
+        });
+        const addons =
+          existingPayment?.addons?.length > 0
+            ? existingPayment.addons
+            : resolvedAddonSelection.addons.map((addon) => ({
+                code: addon.code,
+                name: addon.name,
+                amount: addon.price,
+              }));
+        const hasFeaturedHeroPlacement = addons.some(
+          (addon) => addon.code === FEATURED_HERO_PLACEMENT.code
+        );
+        const addonAmount =
+          existingPayment?.addonAmount ??
+          addons.reduce((total, addon) => total + Number(addon.amount || 0), 0);
+        const paidAmount = Number(session.amount_total || 0) / 100;
+        const baseAmount = existingPayment?.baseAmount ?? Math.max(paidAmount - addonAmount, 0);
 
         supplierProfile.subscriptionPlan = inferPlanTier(selectedPlan || planTier || planName);
         supplierProfile.selectedPlan = planId || supplierProfile.selectedPlan;
         supplierProfile.selectedBillingCycle = billingCycle || supplierProfile.selectedBillingCycle;
         supplierProfile.selectedListingPeriod = listingPeriod || supplierProfile.selectedListingPeriod;
+        supplierProfile.selectedAddons = addons.map((addon) => addon.code);
         supplierProfile.subscriptionStatus = 'active';
         supplierProfile.paymentStatus = 'paid';
         supplierProfile.isApproved = true;
         supplierProfile.listingStatus = 'Approved';
         supplierProfile.stripeCustomerId = session.customer;
+        if (hasFeaturedHeroPlacement) {
+          supplierProfile.featuredHeroPlacement = {
+            enabled: true,
+            activatedAt: supplierProfile.featuredHeroPlacement?.activatedAt || new Date(),
+          };
+        }
         syncSupplierLifecycle(supplierProfile);
         await supplierProfile.save();
 
-        await Payment.create({
-          supplier: supplierProfile._id,
-          plan: planId,
-          planName,
-          billingCycle,
-          listingPeriod,
-          amount: session.amount_total / 100,
-          status: 'paid',
-          stripeSessionId: session.id,
-          // If invoice exists (in subscription mode), you can save invoiceUrl
-        });
+        if (existingPayment) {
+          existingPayment.plan = planId;
+          existingPayment.planName = planName;
+          existingPayment.billingCycle = billingCycle;
+          existingPayment.listingPeriod = listingPeriod;
+          existingPayment.addons = addons;
+          existingPayment.baseAmount = baseAmount;
+          existingPayment.addonAmount = addonAmount;
+          existingPayment.amount = paidAmount;
+          existingPayment.status = 'paid';
+          await existingPayment.save();
+        } else {
+          await Payment.create({
+            supplier: supplierProfile._id,
+            plan: planId,
+            planName,
+            billingCycle,
+            listingPeriod,
+            addons,
+            baseAmount,
+            addonAmount,
+            amount: paidAmount,
+            status: 'paid',
+            stripeSessionId: session.id,
+          });
+        }
       }
     } catch (err) {
       console.error('Error upgrading supplier profile:', err);
@@ -269,7 +383,19 @@ exports.getActiveSubscriptions = async (req, res) => {
 exports.getPlans = async (req, res) => {
   try {
     const plans = await PricingPlan.find({ isActive: true });
-    res.status(200).json({ success: true, count: plans.length, data: plans });
+    res.status(200).json({
+      success: true,
+      count: plans.length,
+      data: plans,
+      addons: [
+        {
+          code: FEATURED_HERO_PLACEMENT.code,
+          name: FEATURED_HERO_PLACEMENT.name,
+          price: FEATURED_HERO_PLACEMENT.price,
+          description: FEATURED_HERO_PLACEMENT.description,
+        },
+      ],
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

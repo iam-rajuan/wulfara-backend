@@ -3,6 +3,7 @@ const { syncSupplierLifecycle } = require('../suppliers/supplierLifecycle');
 const { decorateUserWithAccess, getDefaultAssignableAdminRole } = require('../adminRoles/adminRole.service');
 const AdminRole = require('../adminRoles/adminRole.model');
 const { isProtectedSuperAdminEmail } = require('../../utils/superAdminConfig');
+const { generatePresignedUrl } = require('../../utils/s3');
 
 // @desc    Get all users
 // @route   GET /api/v1/users
@@ -195,5 +196,30 @@ exports.updateMe = async (req, res) => {
     res.status(200).json({ success: true, data: await decorateUserWithAccess(user) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get pre-signed URL for S3 upload for user avatar
+// @route   POST /api/v1/users/upload-url
+// @access  Private
+exports.getUploadUrl = async (req, res) => {
+  try {
+    const { contentType } = req.body;
+    
+    // Ensure valid content type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!contentType || !allowedTypes.includes(contentType)) {
+        return res.status(400).json({ success: false, message: 'Please provide a valid contentType (image/jpeg, image/png, image/webp)' });
+    }
+    
+    const urlData = await generatePresignedUrl('avatars', contentType);
+
+    res.status(200).json({
+      success: true,
+      data: urlData
+    });
+  } catch (error) {
+    console.error('S3 Presign Error:', error);
+    res.status(500).json({ success: false, message: 'Error generating upload URL' });
   }
 };

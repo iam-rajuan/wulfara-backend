@@ -64,7 +64,7 @@ exports.createReview = async (req, res, next) => {
 exports.getSupplierReviews = async (req, res, next) => {
   try {
     const reviews = await Review.find({ supplier: req.params.supplierId })
-      .populate('buyer', 'name profileImage') // assuming buyer has name
+      .populate('buyer', 'name avatar') // assuming buyer has name
       .sort('-createdAt');
 
     res.status(200).json({

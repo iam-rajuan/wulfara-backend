@@ -29,6 +29,16 @@ describe('public directory and admin subscription visibility', () => {
     return supplier;
   };
 
+  const activateFeaturedHeroPlacement = async (supplier) => {
+    supplier.selectedAddons = ['featured_hero_placement'];
+    supplier.featuredHeroPlacement = {
+      enabled: true,
+      activatedAt: new Date(),
+    };
+    await supplier.save();
+    return supplier;
+  };
+
   it('only exposes listed suppliers publicly and through eligibleForRfq filters', async () => {
     const category = await createCategory({ name: 'Directory Category' });
     const plan = await createPricingPlan({
@@ -134,6 +144,35 @@ describe('public directory and admin subscription visibility', () => {
     expect(returnedIds).toEqual(
       [directSupplier._id.toString(), assistedSupplier._id.toString()].sort()
     );
+  });
+
+  it('sorts featured suppliers ahead of normal suppliers in the public directory', async () => {
+    const category = await createCategory({ name: 'Featured Category' });
+    const plan = await createPricingPlan({ name: 'Featured Plan', slug: 'featured-plan', tier: 'premium' });
+    const featuredUser = await createUser({ role: 'supplier', email: uniqueEmail('featured') });
+    const normalUser = await createUser({ role: 'supplier', email: uniqueEmail('normal') });
+
+    const featuredSupplier = await createSupplierForUser(featuredUser, {
+      categories: [category._id],
+      companyName: 'Featured Metals',
+    });
+    const normalSupplier = await createSupplierForUser(normalUser, {
+      categories: [category._id],
+      companyName: 'Normal Metals',
+    });
+
+    await listSupplier(featuredSupplier, category._id, plan);
+    await listSupplier(normalSupplier, category._id, plan);
+    await activateFeaturedHeroPlacement(featuredSupplier);
+
+    const response = await request(app)
+      .get(`/api/v1/suppliers?categories=${category._id.toString()}`)
+      .expect(200);
+
+    expect(response.body.data).toHaveLength(2);
+    expect(response.body.data[0]._id).toBe(featuredSupplier._id.toString());
+    expect(response.body.data[0].featuredHeroPlacement.enabled).toBe(true);
+    expect(response.body.data[1]._id).toBe(normalSupplier._id.toString());
   });
 
   it('protects and filters the active subscriptions admin endpoint', async () => {

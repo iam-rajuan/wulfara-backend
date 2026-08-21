@@ -9,7 +9,8 @@ const {
   getGlobalRfqs,
   getRfqById,
   getUploadUrl,
-  getRfqStats
+  getRfqStats,
+  downloadAttachment
 } = require('./rfq.controller');
 
 const router = express.Router();
@@ -18,6 +19,8 @@ const { protect, authorize, authorizeAdminPermissions, authorizePermissions, pro
 router.post('/', protectOptional, createRfq);
 router.post('/upload-url', protect, getUploadUrl);
 router.get('/', protect, authorize('admin'), authorizePermissions('rfqs.read'), getGlobalRfqs);
+
+router.get('/download', protect, downloadAttachment);
 
 // Buyer protected routes
 router.get('/buyer', protect, getBuyerRfqs);

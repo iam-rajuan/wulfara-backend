@@ -76,7 +76,9 @@ exports.getSupplierRfqs = async (req, res) => {
       return res.status(404).json({ success: false, message: 'You do not have a supplier profile' });
     }
 
-    const rfqs = await Rfq.find({ supplier: supplierProfile._id }).sort('-createdAt');
+    const rfqs = await Rfq.find({ supplier: supplierProfile._id })
+      .populate('buyerUser', 'name email role avatar')
+      .sort('-createdAt');
 
     res.status(200).json({ success: true, count: rfqs.length, data: rfqs });
   } catch (error) {
@@ -134,8 +136,8 @@ exports.updateRfqStatus = async (req, res) => {
 exports.getRfqById = async (req, res) => {
   try {
     const rfq = await Rfq.findById(req.params.id)
-      .populate('buyerUser', 'name email role')
-      .populate('supplier', 'companyName contactEmail contactPhone logo');
+      .populate('buyerUser', 'name email role avatar')
+      .populate('supplier', 'user companyName contactEmail contactPhone logo');
 
     if (!rfq) {
       return res.status(404).json({ success: false, message: 'RFQ not found' });
@@ -170,7 +172,7 @@ exports.getRfqById = async (req, res) => {
 exports.getBuyerRfqs = async (req, res) => {
   try {
     const rfqs = await Rfq.find({ buyerUser: req.user.id })
-      .populate('supplier', 'companyName logo contactEmail contactPhone')
+      .populate('supplier', 'user companyName logo contactEmail contactPhone')
       .sort('-createdAt');
 
     res.status(200).json({ success: true, count: rfqs.length, data: rfqs });
@@ -231,7 +233,7 @@ exports.addMessageToRfq = async (req, res) => {
 exports.getRfqMessages = async (req, res) => {
   try {
     const messages = await Message.find({ rfq: req.params.id })
-      .populate('sender', 'name role')
+      .populate('sender', 'name role avatar')
       .sort('createdAt');
 
     res.status(200).json({ success: true, count: messages.length, data: messages });
@@ -246,8 +248,8 @@ exports.getRfqMessages = async (req, res) => {
 exports.getGlobalRfqs = async (req, res) => {
   try {
     const rfqs = await Rfq.find()
-      .populate('buyerUser', 'name email')
-      .populate('supplier', 'companyName')
+      .populate('buyerUser', 'name email role avatar')
+      .populate('supplier', 'user companyName')
       .sort('-createdAt');
 
     res.status(200).json({ success: true, count: rfqs.length, data: rfqs });
@@ -308,6 +310,34 @@ exports.getRfqStats = async (req, res) => {
         avgResponseTrend
       }
     });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Download RFQ/message attachment securely
+// @route   GET /api/v1/rfqs/download
+// @access  Private
+exports.downloadAttachment = async (req, res) => {
+  try {
+    const { url } = req.query;
+    if (!url) {
+      return res.status(400).json({ success: false, message: 'URL is required' });
+    }
+
+    // Verify bucket
+    const bucketName = process.env.AWS_S3_BUCKET_NAME;
+    if (!url.includes(`${bucketName}.s3`)) {
+      return res.status(400).json({ success: false, message: 'Invalid attachment URL' });
+    }
+
+    const urlObj = new URL(url);
+    const key = decodeURIComponent(urlObj.pathname.substring(1));
+
+    const { generatePresignedDownloadUrl } = require('../../utils/s3');
+    const presignedUrl = await generatePresignedDownloadUrl(key);
+
+    res.status(200).json({ success: true, downloadUrl: presignedUrl });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

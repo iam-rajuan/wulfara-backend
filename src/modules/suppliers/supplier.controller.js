@@ -6,6 +6,7 @@ const User = require('../users/user.model');
 const Category = require('../categories/category.model');
 const PricingPlan = require('../subscriptions/pricingPlan.model');
 const { inferPlanTier } = require('../subscriptions/planTier');
+const { resolveSubscriptionAddons } = require('../subscriptions/subscriptionAddons');
 const {
   getOnboardingRoute,
   hasCompanyInfo,
@@ -165,10 +166,16 @@ exports.getSuppliers = async (req, res) => {
       reqQuery.$and = andConditions;
     }
 
-    query = Supplier.find(reqQuery).populate({
+    query = Supplier.find(reqQuery)
+      .sort(
+        !req.user || req.user.role !== 'admin'
+          ? { 'featuredHeroPlacement.enabled': -1, isFeatured: -1, createdAt: -1 }
+          : { updatedAt: -1 }
+      )
+      .populate({
       path: 'categories',
       select: 'name slug parentCategory status'
-    });
+      });
 
     if (req.user?.role === 'admin') {
       query = query.populate({
@@ -301,8 +308,10 @@ exports.updateSupplierProfile = async (req, res) => {
         'subscriptionPlan',
         'selectedPlan',
         'selectedBillingCycle',
+        'selectedAddons',
         'selectedListingPeriod',
         'stripeCustomerId',
+        'featuredHeroPlacement',
         'user',
       ].forEach((field) => {
         if (field in req.body) {
@@ -702,6 +711,14 @@ exports.saveOnboardingSubscription = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Selected pricing plan was not found or is inactive' });
     }
 
+    const { addons, unsupportedCodes } = resolveSubscriptionAddons(req.body);
+    if (unsupportedCodes.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Unsupported add-on selection: ${unsupportedCodes.join(', ')}`,
+      });
+    }
+
     const resolvedBillingCycle = plan.billingCycle || '';
     const resolvedListingPeriod = deriveListingPeriod(
       resolvedBillingCycle,
@@ -711,6 +728,7 @@ exports.saveOnboardingSubscription = async (req, res) => {
     supplier.selectedPlan = plan._id;
     supplier.selectedBillingCycle = resolvedBillingCycle;
     supplier.selectedListingPeriod = resolvedListingPeriod;
+    supplier.selectedAddons = addons.map((addon) => addon.code);
     supplier.subscriptionPlan = inferPlanTier(plan);
     supplier.subscriptionStatus = 'pending';
     supplier.paymentStatus = supplier.paymentStatus === 'paid' ? supplier.paymentStatus : 'unpaid';

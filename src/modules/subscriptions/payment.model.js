@@ -28,6 +28,22 @@ const paymentSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  addons: {
+    type: [{
+      code: { type: String, required: true },
+      name: { type: String, required: true },
+      amount: { type: Number, required: true, min: 0 },
+    }],
+    default: []
+  },
+  baseAmount: {
+    type: Number,
+    default: 0
+  },
+  addonAmount: {
+    type: Number,
+    default: 0
+  },
   amount: {
     type: Number,
     required: true

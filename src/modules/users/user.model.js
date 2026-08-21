@@ -40,6 +40,14 @@ const userSchema = new mongoose.Schema({
     enum: ['Active', 'Suspended'],
     default: 'Active'
   },
+  avatar: {
+    type: String,
+    default: ''
+  },
+  phone: {
+    type: String,
+    default: ''
+  },
   verifyCode: String,
   resetPasswordToken: String,
   resetPasswordExpire: Date,

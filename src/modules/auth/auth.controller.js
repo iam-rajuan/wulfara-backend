@@ -290,7 +290,7 @@ exports.resetPassword = async (req, res) => {
 // @access   Private (Admin)
 exports.getUsers = async (req, res) => {
   try {
-    const users = await User.find().populate('adminRole');
+    const users = await User.find().sort({ createdAt: -1 }).populate('adminRole');
     const decoratedUsers = await Promise.all(users.map((user) => decorateUserWithAccess(user)));
     res.status(200).json({ success: true, count: decoratedUsers.length, data: decoratedUsers });
   } catch (error) {

@@ -1,10 +1,26 @@
 const trimOrigin = (value) => (value ? value.replace(/\/+$/, '') : '');
 
-const getConfiguredOrigins = () =>
-  [process.env.WEBSITE_ORIGIN, process.env.DASHBOARD_ORIGIN]
-    .flatMap((value) => (value || '').split(','))
-    .map((value) => trimOrigin(value.trim()))
-    .filter(Boolean);
+const STATIC_ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:4173',
+  'http://localhost:5000',
+  'http://localhost:5173',
+  'https://wulfara.space',
+  'https://www.wulfara.space',
+  'https://admin.wulfara.space',
+  'https://api.wulfara.space',
+];
+
+const isWulfaraSubdomain = (origin) => {
+  try {
+    const host = new URL(origin).hostname;
+    return host.endsWith('.wulfara.space');
+  } catch (error) {
+    return false;
+  }
+};
+
+const getConfiguredOrigins = () => STATIC_ALLOWED_ORIGINS.slice();
 
 const isOriginAllowed = (origin) => {
   if (!origin) {
@@ -14,8 +30,12 @@ const isOriginAllowed = (origin) => {
   const normalizedOrigin = trimOrigin(origin);
   const configuredOrigins = getConfiguredOrigins();
 
+  if (isWulfaraSubdomain(normalizedOrigin)) {
+    return true;
+  }
+
   if (configuredOrigins.length === 0) {
-    return process.env.NODE_ENV !== 'production';
+    return true;
   }
 
   return configuredOrigins.includes(normalizedOrigin);
@@ -31,15 +51,15 @@ const buildCorsOriginHandler = () => (origin, callback) => {
 };
 
 const buildSocketCorsOptions = () => {
-  const configuredOrigins = getConfiguredOrigins();
-
   return {
-    origin:
-      configuredOrigins.length > 0
-        ? configuredOrigins
-        : process.env.NODE_ENV === 'production'
-          ? false
-          : true,
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error(`Origin ${origin} is not allowed by Socket.IO CORS`));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   };

@@ -320,7 +320,7 @@ exports.getRfqStats = async (req, res) => {
 // @access  Private
 exports.downloadAttachment = async (req, res) => {
   try {
-    const { url } = req.query;
+    const { url, type } = req.query;
     if (!url) {
       return res.status(400).json({ success: false, message: 'URL is required' });
     }
@@ -334,8 +334,11 @@ exports.downloadAttachment = async (req, res) => {
     const urlObj = new URL(url);
     const key = decodeURIComponent(urlObj.pathname.substring(1));
 
+    const filename = key.split('/').pop();
+    const disposition = type === 'download' ? `attachment; filename="${filename}"` : 'inline';
+
     const { generatePresignedDownloadUrl } = require('../../utils/s3');
-    const presignedUrl = await generatePresignedDownloadUrl(key);
+    const presignedUrl = await generatePresignedDownloadUrl(key, disposition);
 
     res.status(200).json({ success: true, downloadUrl: presignedUrl });
   } catch (error) {

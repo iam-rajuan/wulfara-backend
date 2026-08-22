@@ -29,10 +29,11 @@ exports.generatePresignedUrl = async (folder, contentType) => {
   };
 };
 
-exports.generatePresignedDownloadUrl = async (key) => {
+exports.generatePresignedDownloadUrl = async (key, responseDisposition = 'inline') => {
   const command = new GetObjectCommand({
     Bucket: process.env.AWS_S3_BUCKET_NAME,
-    Key: key
+    Key: key,
+    ResponseContentDisposition: responseDisposition
   });
 
   // Expire in 15 minutes

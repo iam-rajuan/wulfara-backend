@@ -227,3 +227,55 @@ exports.getDashboard = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Export master admin dashboard analytics as CSV
+// @route   GET /api/v1/reports/dashboard/export
+// @access  Private (Admin only)
+exports.exportDashboard = async (req, res) => {
+  try {
+    const dashboardResponse = await new Promise((resolve, reject) => {
+      const mockRes = {
+        status(code) {
+          this.statusCode = code;
+          return this;
+        },
+        json(payload) {
+          resolve({ statusCode: this.statusCode || 200, payload });
+        },
+      };
+
+      exports.getDashboard(req, mockRes).catch(reject);
+    });
+
+    if (dashboardResponse.statusCode !== 200 || !dashboardResponse.payload?.data) {
+      return res.status(dashboardResponse.statusCode || 500).json(dashboardResponse.payload || { success: false });
+    }
+
+    const stats = dashboardResponse.payload.data;
+    const rows = [
+      ['Metric', 'Value'],
+      ['Total Revenue', stats.totalRevenue || 0],
+      ['Total Users', stats.totalUsers || 0],
+      ['Total Suppliers', stats.totalSuppliers || 0],
+      ['Pending Listings', stats.pendingListings || 0],
+      ['Active Subscriptions', stats.activeSubscriptions || 0],
+      ['Total RFQs', stats.totalRfqs || 0],
+      ['User Growth Delta', stats.userGrowthDelta || 0],
+      ['User Growth Percent', stats.userGrowthPercent || 0],
+    ];
+
+    const csv = rows
+      .map((row) =>
+        row
+          .map((cell) => `"${String(cell ?? '').replace(/"/g, '""')}"`)
+          .join(',')
+      )
+      .join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="wulfara-admin-dashboard-report.csv"');
+    res.status(200).send(csv);
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

@@ -110,6 +110,19 @@ const resolveWebsiteOrigin = (req) => {
     return origin;
   }
 
+  const envOrigin = trimOrigin(process.env.WEBSITE_ORIGIN);
+  if (envOrigin) {
+    return envOrigin;
+  }
+
+  if (process.env.NODE_ENV === 'test') {
+    return 'https://www.wulfara.test';
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    return 'http://localhost:3000';
+  }
+
   return '';
 };
 
@@ -117,6 +130,19 @@ const resolveDashboardOrigin = (req) => {
   const origin = trimOrigin(getRequestOrigin(req));
   if (origin) {
     return origin;
+  }
+
+  const envOrigin = trimOrigin(process.env.DASHBOARD_ORIGIN);
+  if (envOrigin) {
+    return envOrigin;
+  }
+
+  if (process.env.NODE_ENV === 'test') {
+    return 'https://dashboard.wulfara.test';
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    return 'http://localhost:5173';
   }
 
   return '';

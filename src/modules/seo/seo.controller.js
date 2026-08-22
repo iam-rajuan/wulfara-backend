@@ -1,4 +1,7 @@
 const SeoSetting = require('./seo.model');
+const { generatePresignedUrl } = require('../../utils/s3');
+const Supplier = require('../suppliers/supplier.model');
+const Review = require('../reviews/review.model');
 
 // @desc    Get all SEO settings
 // @route   GET /api/v1/seo
@@ -64,6 +67,63 @@ exports.updateSeoSettings = async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: setting });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get SEO summary metrics for admin preview
+// @route   GET /api/v1/seo/summary
+// @access  Private (Admin only)
+exports.getSeoSummary = async (req, res) => {
+  try {
+    const [supplierCount, reviewCount, supplierRatings] = await Promise.all([
+      Supplier.countDocuments({
+        isApproved: true,
+        listingStatus: 'Approved',
+      }),
+      Review.countDocuments(),
+      Supplier.find({
+        isApproved: true,
+        listingStatus: 'Approved',
+        totalReviews: { $gt: 0 },
+      }).select('averageRating'),
+    ]);
+
+    const averageRating = supplierRatings.length > 0
+      ? Math.round(
+          (supplierRatings.reduce((sum, supplier) => sum + Number(supplier.averageRating || 0), 0) /
+            supplierRatings.length) *
+            10
+        ) / 10
+      : 0;
+
+    res.status(200).json({
+      success: true,
+      data: {
+        supplierCount,
+        reviewCount,
+        averageRating,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get pre-signed URL for SEO image upload
+// @route   POST /api/v1/seo/upload-url
+// @access  Private (Admin only)
+exports.getUploadUrl = async (req, res) => {
+  try {
+    const { contentType } = req.body;
+
+    if (!contentType) {
+      return res.status(400).json({ success: false, message: 'Content type is required' });
+    }
+
+    const urlData = await generatePresignedUrl('seo', contentType);
+    res.status(200).json({ success: true, data: urlData });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

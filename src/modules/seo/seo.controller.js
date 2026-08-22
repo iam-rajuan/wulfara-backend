@@ -40,7 +40,7 @@ exports.getSeoByPath = async (req, res) => {
 // @access  Private (Admin only)
 exports.updateSeoSettings = async (req, res) => {
   try {
-    const { path, title, description, keywords, ogImage } = req.body;
+    const { path, title, description, keywords, ogImage, indexEnabled, followOutbound } = req.body;
 
     if (!path) {
       return res.status(400).json({ success: false, message: 'Please provide a path' });
@@ -52,7 +52,7 @@ exports.updateSeoSettings = async (req, res) => {
       // Update existing
       setting = await SeoSetting.findOneAndUpdate(
         { path },
-        { title, description, keywords, ogImage },
+        { title, description, keywords, ogImage, indexEnabled, followOutbound },
         { new: true, runValidators: true }
       );
     } else {
@@ -62,7 +62,9 @@ exports.updateSeoSettings = async (req, res) => {
         title,
         description,
         keywords,
-        ogImage
+        ogImage,
+        indexEnabled,
+        followOutbound
       });
     }
 

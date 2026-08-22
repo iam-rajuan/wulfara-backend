@@ -21,6 +21,14 @@ const seoSchema = new mongoose.Schema({
   ogImage: {
     type: String,
     default: ''
+  },
+  indexEnabled: {
+    type: Boolean,
+    default: true
+  },
+  followOutbound: {
+    type: Boolean,
+    default: true
   }
 }, { timestamps: true });
 

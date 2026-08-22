@@ -17,7 +17,20 @@ exports.getConversations = async (req, res) => {
       .populate('rfq', 'rfqNumber title status')
       .sort({ lastMessageAt: -1 });
 
-    res.status(200).json({ success: true, count: conversations.length, data: conversations });
+    const conversationsWithUnread = await Promise.all(
+      conversations.map(async (conversation) => {
+        const hasUnread = await ChatMessage.exists({
+          conversation: conversation._id,
+          sender: { $ne: req.user.id },
+          isRead: false
+        });
+        const convObj = conversation.toObject();
+        convObj.hasUnread = !!hasUnread;
+        return convObj;
+      })
+    );
+
+    res.status(200).json({ success: true, count: conversationsWithUnread.length, data: conversationsWithUnread });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

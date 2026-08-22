@@ -36,9 +36,11 @@ exports.addFavorite = async (req, res) => {
 // @access  Private (Buyer/User)
 exports.getFavorites = async (req, res) => {
   try {
-    const favorites = await Favorite.find({ user: req.user.id }).populate({
+    const favorites = await Favorite.find({ user: req.user.id })
+      .sort({ createdAt: -1 })
+      .populate({
       path: 'supplier',
-      select: 'companyName description logo categories location user'
+      select: 'companyName description logo categories location user isApproved isVerified avgResponseTime supplierType averageRating totalReviews'
     });
 
     res.status(200).json({ success: true, count: favorites.length, data: favorites });

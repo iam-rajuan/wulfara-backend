@@ -48,8 +48,6 @@ beforeAll(async () => {
   process.env.NODE_ENV = 'test';
   process.env.JWT_SECRET = 'test-secret';
   process.env.JWT_EXPIRES_IN = '30d';
-  process.env.DASHBOARD_ORIGIN = 'https://dashboard.wulfara.test';
-  process.env.WEBSITE_ORIGIN = 'https://www.wulfara.test';
   process.env.STRIPE_SECRET_KEY = 'sk_test_mocked';
   process.env.MONGOMS_MD5_CHECK = 'false';
   delete process.env.STRIPE_WEBHOOK_SECRET;

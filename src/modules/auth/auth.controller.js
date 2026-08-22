@@ -5,7 +5,7 @@ const generateToken = require('../../utils/generateToken');
 const sendEmail = require('../../utils/sendEmail');
 const crypto = require('crypto');
 const { logger } = require('../../utils/logger');
-const { resolveAppOrigin } = require('../../utils/origins');
+const { resolveWebsiteOrigin, resolveDashboardOrigin } = require('../../utils/origins');
 const { syncSupplierLifecycle } = require('../suppliers/supplierLifecycle');
 const { decorateUserWithAccess } = require('../adminRoles/adminRole.service');
 // @desc     Register user
@@ -217,14 +217,7 @@ exports.forgotPassword = async (req, res) => {
     await user.save({ validateBeforeSave: false });
 
     const isDashboard = req.body.isDashboard;
-    const preferredOrigin = isDashboard ? process.env.DASHBOARD_ORIGIN : process.env.WEBSITE_ORIGIN;
-    const baseUrl = resolveAppOrigin(req, preferredOrigin);
-    if (!baseUrl) {
-      return res.status(500).json({
-        success: false,
-        message: `${isDashboard ? 'DASHBOARD_ORIGIN' : 'WEBSITE_ORIGIN'} must be configured before sending password reset emails in production`,
-      });
-    }
+    const baseUrl = isDashboard ? resolveDashboardOrigin(req) : resolveWebsiteOrigin(req);
     const path = isDashboard ? 'new-password' : 'reset-password';
     const resetUrl = `${baseUrl}/${path}/${resetToken}`;
     const message = `

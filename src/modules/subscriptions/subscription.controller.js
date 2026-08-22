@@ -4,7 +4,7 @@ const Payment = require('./payment.model');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
 const PricingPlan = require('./pricingPlan.model');
 const { inferPlanTier } = require('./planTier');
-const { resolveAppOrigin } = require('../../utils/origins');
+const { resolveDashboardOrigin } = require('../../utils/origins');
 const {
   FEATURED_HERO_PLACEMENT,
   resolveSubscriptionAddons,
@@ -85,13 +85,7 @@ exports.createCheckoutSession = async (req, res) => {
     syncSupplierLifecycle(supplierProfile);
     await supplierProfile.save();
 
-    const appOrigin = resolveAppOrigin(req, process.env.DASHBOARD_ORIGIN);
-    if (!appOrigin) {
-      return res.status(500).json({
-        success: false,
-        message: 'DASHBOARD_ORIGIN must be configured before starting supplier checkout in production',
-      });
-    }
+    const appOrigin = resolveDashboardOrigin(req);
 
     const adminAssistedQuery =
       req.user.role === 'admin'

@@ -104,12 +104,32 @@ const resolveAppOrigin = (req, preferredOrigin) => {
   return '';
 };
 
+const resolveWebsiteOrigin = (req) => {
+  const origin = trimOrigin(getRequestOrigin(req));
+  if (origin) {
+    return origin;
+  }
+
+  return '';
+};
+
+const resolveDashboardOrigin = (req) => {
+  const origin = trimOrigin(getRequestOrigin(req));
+  if (origin) {
+    return origin;
+  }
+
+  return '';
+};
+
 module.exports = {
   buildCorsOriginHandler,
   buildSocketCorsOptions,
   getRequestOrigin,
   getConfiguredOrigins,
   isOriginAllowed,
+  resolveDashboardOrigin,
+  resolveWebsiteOrigin,
   resolveAppOrigin,
   trimOrigin,
 };

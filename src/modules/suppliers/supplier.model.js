@@ -90,7 +90,30 @@ const supplierSchema = new mongoose.Schema({
     isPdf: Boolean,
     isPrimary: Boolean,
     size: String,
-    url: String
+    url: String,
+    uploadedAt: {
+      type: Date,
+      default: Date.now
+    },
+    reviewStatus: {
+      type: String,
+      enum: ['Pending Review', 'Approved', 'Rejected'],
+      default: 'Pending Review'
+    },
+    reviewedAt: {
+      type: Date,
+      default: null
+    },
+    reviewedBy: {
+      type: mongoose.Schema.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    reviewNote: {
+      type: String,
+      maxlength: [500, 'Review note can not be more than 500 characters'],
+      default: ''
+    }
   }],
   location: {
     type: {
@@ -189,6 +212,29 @@ const supplierSchema = new mongoose.Schema({
   totalReviews: {
     type: Number,
     default: 0
+  },
+  verificationChecklist: {
+    identity: {
+      type: Boolean,
+      default: false
+    },
+    business: {
+      type: Boolean,
+      default: false
+    },
+    tax: {
+      type: Boolean,
+      default: false
+    },
+    updatedAt: {
+      type: Date,
+      default: null
+    },
+    updatedBy: {
+      type: mongoose.Schema.ObjectId,
+      ref: 'User',
+      default: null
+    }
   },
   monthlyViews: {
     type: Map,

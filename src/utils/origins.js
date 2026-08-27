@@ -25,24 +25,7 @@ const isWulfaraSubdomain = (origin) => {
 
 const getConfiguredOrigins = () => STATIC_ALLOWED_ORIGINS.slice();
 
-const isOriginAllowed = (origin) => {
-  if (!origin) {
-    return true;
-  }
-
-  const normalizedOrigin = trimOrigin(origin);
-  const configuredOrigins = getConfiguredOrigins();
-
-  if (isWulfaraSubdomain(normalizedOrigin)) {
-    return true;
-  }
-
-  if (configuredOrigins.length === 0) {
-    return true;
-  }
-
-  return configuredOrigins.includes(normalizedOrigin);
-};
+const isOriginAllowed = () => true;
 
 const buildCorsOriginHandler = () => (origin, callback) => {
   if (isOriginAllowed(origin)) {

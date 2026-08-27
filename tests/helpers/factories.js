@@ -30,6 +30,8 @@ const createUser = async (overrides = {}) =>
     adminRole: overrides.adminRole || null,
     isVerified: overrides.isVerified ?? true,
     status: overrides.status || 'Active',
+    avatar: overrides.avatar || '',
+    phone: overrides.phone || '',
   });
 
 const tokenForUser = (user) => generateToken(user._id.toString());
@@ -72,6 +74,7 @@ const createSupplierForUser = async (user, overrides = {}) => {
         formattedAddress: 'Dhaka, Bangladesh',
       },
     supplierType: overrides.supplierType || 'Manufacturer',
+    logo: overrides.logo || 'no-logo.jpg',
     selectedPlan: overrides.selectedPlan ?? null,
     selectedBillingCycle: overrides.selectedBillingCycle || '',
     selectedListingPeriod: overrides.selectedListingPeriod || '',

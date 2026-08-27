@@ -8,6 +8,7 @@ const {
   getUploadUrl,
   getSupplierDashboard,
   reviewSupplier,
+  updateSupplierVerification,
   featureSupplier,
   getOnboardingStatus,
   saveOnboardingIndustry,
@@ -39,6 +40,7 @@ router.route('/:id')
 
 // Admin controls
 router.put('/:id/review', protect, authorize('admin'), authorizePermissions('listings.manage'), reviewSupplier);
+router.put('/:id/verification', protect, authorize('admin'), authorizePermissions('listings.manage'), updateSupplierVerification);
 router.put('/:id/feature', protect, authorize('admin'), authorizePermissions('listings.manage'), featureSupplier);
 
 module.exports = router;

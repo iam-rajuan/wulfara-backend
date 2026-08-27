@@ -188,10 +188,31 @@ exports.updateMe = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Cannot update password, role, or verification status here' });
     }
 
+    const existingUser = await User.findById(req.user.id).populate('adminRole');
+    if (!existingUser) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
     const user = await User.findByIdAndUpdate(req.user.id, req.body, {
       new: true,
       runValidators: true
     }).populate('adminRole');
+
+    const nextAvatar = typeof req.body.avatar === 'string' ? req.body.avatar.trim() : '';
+    if (user?.role === 'supplier' && nextAvatar) {
+      const supplier = await Supplier.findOne({ user: user._id });
+
+      if (supplier) {
+        const hadDedicatedLogo = supplier.logo && supplier.logo !== 'no-logo.jpg';
+        const usedPreviousAvatarAsLogo = Boolean(existingUser.avatar) && supplier.logo === existingUser.avatar;
+
+        if (!hadDedicatedLogo || usedPreviousAvatarAsLogo) {
+          supplier.logo = nextAvatar;
+          syncSupplierLifecycle(supplier);
+          await supplier.save();
+        }
+      }
+    }
 
     res.status(200).json({ success: true, data: await decorateUserWithAccess(user) });
   } catch (error) {

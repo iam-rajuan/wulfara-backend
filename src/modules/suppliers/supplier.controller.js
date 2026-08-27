@@ -5,6 +5,7 @@ const { createNotification } = require('../../utils/notificationService');
 const User = require('../users/user.model');
 const Category = require('../categories/category.model');
 const PricingPlan = require('../subscriptions/pricingPlan.model');
+const Payment = require('../subscriptions/payment.model');
 const { inferPlanTier } = require('../subscriptions/planTier');
 const { resolveSubscriptionAddons } = require('../subscriptions/subscriptionAddons');
 const {
@@ -16,7 +17,114 @@ const {
   syncSupplierLifecycle,
 } = require('./supplierLifecycle');
 
-const ADMIN_SAFE_USER_SELECT = 'name email role status isVerified';
+const ADMIN_SAFE_USER_SELECT = 'name email role status isVerified avatar';
+const DOCUMENT_REVIEW_STATUSES = ['Pending Review', 'Approved', 'Rejected'];
+const PUBLIC_SUPPLIER_USER_SELECT = 'name avatar';
+
+const getCurrentMonthKey = () => {
+  const currentDate = new Date();
+  return `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+};
+
+const getUserIdValue = (userValue) => {
+  if (!userValue) {
+    return '';
+  }
+
+  if (typeof userValue === 'string') {
+    return userValue;
+  }
+
+  if (typeof userValue?.toString === 'function' && !userValue?._id) {
+    return userValue.toString();
+  }
+
+  if (userValue?._id) {
+    return userValue._id.toString();
+  }
+
+  return '';
+};
+
+const getDocumentDisplayName = (document = {}) => {
+  if (document.title) {
+    return document.title;
+  }
+
+  if (document.url) {
+    const urlParts = document.url.split('/');
+    return decodeURIComponent(urlParts[urlParts.length - 1] || 'Document');
+  }
+
+  return 'Document';
+};
+
+const buildVerificationChecklist = (supplier = {}) => ({
+  identity: supplier.verificationChecklist?.identity === true,
+  business: supplier.verificationChecklist?.business === true,
+  tax: supplier.verificationChecklist?.tax === true,
+  updatedAt: supplier.verificationChecklist?.updatedAt || null,
+  updatedBy: supplier.verificationChecklist?.updatedBy || null,
+});
+
+const buildVerificationDocuments = (supplier = {}) =>
+  (supplier.gallery || [])
+    .filter((item) => item?.url && (item.isPdf || item.type === 'Certificates'))
+    .map((item) => ({
+      id: item._id?.toString?.() || item.url,
+      title: getDocumentDisplayName(item),
+      type: item.type || 'Certificates',
+      url: item.url,
+      size: item.size || '',
+      isPdf: item.isPdf !== false,
+      uploadedAt: item.uploadedAt || supplier.updatedAt || supplier.createdAt || null,
+      reviewStatus: DOCUMENT_REVIEW_STATUSES.includes(item.reviewStatus)
+        ? item.reviewStatus
+        : 'Pending Review',
+      reviewedAt: item.reviewedAt || null,
+      reviewedBy: item.reviewedBy || null,
+      reviewNote: item.reviewNote || '',
+    }));
+
+const sumPaidAmounts = (payments = []) =>
+  payments.reduce((total, payment) => total + (payment.status === 'paid' ? payment.amount || 0 : 0), 0);
+
+const serializeSupplierForResponse = async (supplier, options = {}) => {
+  const supplierObject = supplier?.toObject ? supplier.toObject() : supplier;
+
+  if (!options.includeAdminDetails) {
+    return supplierObject;
+  }
+
+  const payments = await Payment.find({ supplier: supplierObject._id })
+    .populate({ path: 'plan', select: 'name slug price billingCycle isActive' })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const monthlyViews = supplierObject.monthlyViews instanceof Map
+    ? Object.fromEntries(supplierObject.monthlyViews)
+    : supplierObject.monthlyViews || {};
+
+  return {
+    ...supplierObject,
+    verificationChecklist: buildVerificationChecklist(supplierObject),
+    verificationDocuments: buildVerificationDocuments(supplierObject),
+    paymentSummary: {
+      latestPayment: payments[0] || null,
+      paymentCount: payments.length,
+      totalPaidAmount: sumPaidAmounts(payments),
+      history: payments,
+    },
+    listingSummary: {
+      isPubliclyVisible: isSupplierListed(supplier),
+      onboardingStep: supplierObject.onboardingStep || 'industry',
+      onboardingCompletedAt: supplierObject.onboardingCompletedAt || null,
+      currentMonthViews: monthlyViews[getCurrentMonthKey()] || 0,
+      totalRecordedViews: Object.values(monthlyViews).reduce((sum, value) => sum + (Number(value) || 0), 0),
+      monthlyViews,
+    },
+  };
+};
 
 const normalizeWebsiteUrl = (value = '') => {
   if (typeof value !== 'string') {
@@ -196,16 +304,34 @@ exports.getSuppliers = async (req, res) => {
 // @access  Public
 exports.getSupplier = async (req, res) => {
   try {
-    let query = Supplier.findById(req.params.id).populate({
-      path: 'categories',
-      select: 'name slug parentCategory status'
-    });
+    let query = Supplier.findById(req.params.id)
+      .populate({
+        path: 'categories',
+        select: 'name slug parentCategory status'
+      })
+      .populate({
+        path: 'user',
+        select: PUBLIC_SUPPLIER_USER_SELECT
+      });
 
     if (req.user?.role === 'admin') {
-      query = query.populate({
-        path: 'user',
-        select: ADMIN_SAFE_USER_SELECT
-      });
+      query = query
+        .populate({
+          path: 'user',
+          select: ADMIN_SAFE_USER_SELECT
+        })
+        .populate({
+          path: 'selectedPlan',
+          select: 'name slug price billingCycle isActive'
+        })
+        .populate({
+          path: 'verificationChecklist.updatedBy',
+          select: ADMIN_SAFE_USER_SELECT
+        })
+        .populate({
+          path: 'gallery.reviewedBy',
+          select: ADMIN_SAFE_USER_SELECT
+        });
     }
 
     const supplier = await query;
@@ -213,26 +339,31 @@ exports.getSupplier = async (req, res) => {
     if (!supplier) {
       return res.status(404).json({ success: false, message: 'Supplier not found' });
     }
+
+    const supplierUserId = getUserIdValue(supplier.user);
     
     const publiclyVisible = isSupplierListed(supplier);
 
     // If not listed yet, only admin or the supplier themselves can view it
     if (!publiclyVisible) {
-        if (!req.user || (req.user.role !== 'admin' && req.user.id !== supplier.user.toString())) {
+        if (!req.user || (req.user.role !== 'admin' && req.user.id !== supplierUserId)) {
             return res.status(403).json({ success: false, message: 'Supplier profile is pending approval' });
         }
     }
 
     // Increment view count for the current month
-    const currentDate = new Date();
-    const monthKey = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+    const monthKey = getCurrentMonthKey();
     
     // Only count views if it's not the supplier themselves viewing their own profile
-    if (!req.user || req.user.id !== supplier.user.toString()) {
+    if (!req.user || req.user.id !== supplierUserId) {
       await Supplier.findByIdAndUpdate(supplier._id, { $inc: { [`monthlyViews.${monthKey}`]: 1 } });
     }
 
-    res.status(200).json({ success: true, data: supplier });
+    const data = await serializeSupplierForResponse(supplier, {
+      includeAdminDetails: req.user?.role === 'admin',
+    });
+
+    res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -499,6 +630,14 @@ exports.reviewSupplier = async (req, res) => {
     await supplier.save();
 
     if (supplier.user) {
+      const user = await User.findById(supplier.user);
+      if (user) {
+        user.status = supplier.listingStatus === 'Suspended' ? 'Suspended' : 'Active';
+        await user.save();
+      }
+    }
+
+    if (supplier.user) {
       await createNotification(
         req,
         supplier.user,
@@ -510,6 +649,110 @@ exports.reviewSupplier = async (req, res) => {
     }
 
     res.status(200).json({ success: true, data: supplier });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Persist admin verification checklist and document review decisions
+// @route   PUT /api/v1/suppliers/:id/verification
+// @access  Private (Admin only)
+exports.updateSupplierVerification = async (req, res) => {
+  try {
+    const supplier = await Supplier.findById(req.params.id);
+
+    if (!supplier) {
+      return res.status(404).json({ success: false, message: 'Supplier not found' });
+    }
+
+    const { checklist, documents } = req.body || {};
+    let hasChanges = false;
+
+    if (checklist && typeof checklist === 'object') {
+      const nextChecklist = supplier.verificationChecklist || {};
+
+      ['identity', 'business', 'tax'].forEach((key) => {
+        if (Object.prototype.hasOwnProperty.call(checklist, key)) {
+          nextChecklist[key] = checklist[key] === true;
+          hasChanges = true;
+        }
+      });
+
+      if (hasChanges) {
+        nextChecklist.updatedAt = new Date();
+        nextChecklist.updatedBy = req.user.id;
+        supplier.verificationChecklist = nextChecklist;
+      }
+    }
+
+    if (documents !== undefined) {
+      if (!Array.isArray(documents)) {
+        return res.status(400).json({ success: false, message: 'Documents must be an array' });
+      }
+
+      for (const documentUpdate of documents) {
+        const documentId = documentUpdate?.id;
+        const reviewStatus = documentUpdate?.reviewStatus;
+
+        if (!documentId) {
+          return res.status(400).json({ success: false, message: 'Each document update requires an id' });
+        }
+
+        if (!DOCUMENT_REVIEW_STATUSES.includes(reviewStatus)) {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid document review status: ${reviewStatus}`,
+          });
+        }
+
+        const document =
+          supplier.gallery.id(documentId) ||
+          supplier.gallery.find((item) => item?.url === documentId);
+
+        if (!document) {
+          return res.status(404).json({ success: false, message: `Document not found: ${documentId}` });
+        }
+
+        if (!(document.isPdf || document.type === 'Certificates')) {
+          return res.status(400).json({ success: false, message: 'Only certificate/documents can be reviewed' });
+        }
+
+        document.reviewStatus = reviewStatus;
+        document.reviewedAt = new Date();
+        document.reviewedBy = req.user.id;
+        if (typeof documentUpdate.reviewNote === 'string') {
+          document.reviewNote = documentUpdate.reviewNote.trim();
+        }
+        hasChanges = true;
+      }
+    }
+
+    if (!hasChanges) {
+      return res.status(400).json({ success: false, message: 'No verification updates were provided' });
+    }
+
+    await supplier.save();
+
+    if (supplier.user) {
+      await createNotification(
+        req,
+        supplier.user,
+        'Verification Checklist Updated',
+        'An administrator updated your supplier verification checklist or document review status.',
+        'approval',
+        supplier._id
+      );
+    }
+
+    const hydratedSupplier = await Supplier.findById(supplier._id)
+      .populate({ path: 'categories', select: 'name slug parentCategory status' })
+      .populate({ path: 'user', select: ADMIN_SAFE_USER_SELECT })
+      .populate({ path: 'selectedPlan', select: 'name slug price billingCycle isActive' })
+      .populate({ path: 'verificationChecklist.updatedBy', select: ADMIN_SAFE_USER_SELECT })
+      .populate({ path: 'gallery.reviewedBy', select: ADMIN_SAFE_USER_SELECT });
+
+    const data = await serializeSupplierForResponse(hydratedSupplier, { includeAdminDetails: true });
+    res.status(200).json({ success: true, data });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

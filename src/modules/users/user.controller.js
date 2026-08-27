@@ -4,6 +4,7 @@ const { decorateUserWithAccess, getDefaultAssignableAdminRole } = require('../ad
 const AdminRole = require('../adminRoles/adminRole.model');
 const { isProtectedSuperAdminEmail } = require('../../utils/superAdminConfig');
 const { generatePresignedUrl } = require('../../utils/s3');
+const sendEmail = require('../../utils/sendEmail');
 
 // @desc    Get all users
 // @route   GET /api/v1/users
@@ -188,6 +189,13 @@ exports.updateMe = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Cannot update password, role, or verification status here' });
     }
 
+    if (Object.prototype.hasOwnProperty.call(req.body, 'email')) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email address is locked. Use the email change OTP flow to update it.',
+      });
+    }
+
     const existingUser = await User.findById(req.user.id).populate('adminRole');
     if (!existingUser) {
       return res.status(404).json({ success: false, message: 'User not found' });
@@ -198,23 +206,127 @@ exports.updateMe = async (req, res) => {
       runValidators: true
     }).populate('adminRole');
 
-    const nextAvatar = typeof req.body.avatar === 'string' ? req.body.avatar.trim() : '';
-    if (user?.role === 'supplier' && nextAvatar) {
-      const supplier = await Supplier.findOne({ user: user._id });
+    res.status(200).json({ success: true, data: await decorateUserWithAccess(user) });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
 
-      if (supplier) {
-        const hadDedicatedLogo = supplier.logo && supplier.logo !== 'no-logo.jpg';
-        const usedPreviousAvatarAsLogo = Boolean(existingUser.avatar) && supplier.logo === existingUser.avatar;
+// @desc    Request OTP for email change
+// @route   POST /api/v1/users/me/email-change/request
+// @access  Private
+exports.requestEmailChangeOtp = async (req, res) => {
+  try {
+    const nextEmail = req.body?.email?.trim().toLowerCase();
 
-        if (!hadDedicatedLogo || usedPreviousAvatarAsLogo) {
-          supplier.logo = nextAvatar;
-          syncSupplierLifecycle(supplier);
-          await supplier.save();
-        }
-      }
+    if (!nextEmail) {
+      return res.status(400).json({ success: false, message: 'Please provide a new email address' });
     }
 
-    res.status(200).json({ success: true, data: await decorateUserWithAccess(user) });
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+    if (!emailPattern.test(nextEmail)) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid email address' });
+    }
+
+    const user = await User.findById(req.user.id).populate('adminRole');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (user.email === nextEmail) {
+      return res.status(400).json({ success: false, message: 'This is already your current email address' });
+    }
+
+    const existingUser = await User.findOne({ email: nextEmail });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'That email address is already in use' });
+    }
+
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    user.pendingEmail = nextEmail;
+    user.emailChangeCode = otpCode;
+    user.emailChangeExpires = new Date(Date.now() + 10 * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
+
+    const message = `
+      <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; color: #1b2b3a;">
+        <h2 style="color: #1b2b3a;">Confirm your new email address</h2>
+        <p>Use the verification code below to confirm your Wulfara email change request.</p>
+        <p style="font-size: 28px; font-weight: 700; letter-spacing: 4px; margin: 24px 0;">${otpCode}</p>
+        <p>This code will expire in 10 minutes.</p>
+      </div>
+    `;
+
+    await sendEmail({
+      email: nextEmail,
+      subject: 'Wulfara Email Change Verification Code',
+      html: message,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Verification code sent to the new email address',
+      data: {
+        email: nextEmail,
+        expiresAt: user.emailChangeExpires,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Verify OTP and change email
+// @route   POST /api/v1/users/me/email-change/verify
+// @access  Private
+exports.verifyEmailChangeOtp = async (req, res) => {
+  try {
+    const otpCode = req.body?.otp?.trim();
+
+    if (!otpCode) {
+      return res.status(400).json({ success: false, message: 'Please provide the verification code' });
+    }
+
+    const user = await User.findById(req.user.id).populate('adminRole');
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (!user.pendingEmail || !user.emailChangeCode || !user.emailChangeExpires) {
+      return res.status(400).json({ success: false, message: 'No email change request is pending' });
+    }
+
+    if (user.emailChangeExpires.getTime() <= Date.now()) {
+      user.pendingEmail = '';
+      user.emailChangeCode = '';
+      user.emailChangeExpires = null;
+      await user.save({ validateBeforeSave: false });
+      return res.status(400).json({ success: false, message: 'Verification code has expired. Request a new one.' });
+    }
+
+    if (user.emailChangeCode !== otpCode) {
+      return res.status(400).json({ success: false, message: 'Invalid verification code' });
+    }
+
+    const nextEmail = user.pendingEmail.trim().toLowerCase();
+
+    const existingUser = await User.findOne({ email: nextEmail, _id: { $ne: user._id } });
+    if (existingUser) {
+      return res.status(400).json({ success: false, message: 'That email address is already in use' });
+    }
+
+    user.email = nextEmail;
+    user.pendingEmail = '';
+    user.emailChangeCode = '';
+    user.emailChangeExpires = null;
+    user.isVerified = true;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: 'Email address updated successfully',
+      data: await decorateUserWithAccess(user),
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

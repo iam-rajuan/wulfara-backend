@@ -9,8 +9,8 @@ const {
   models: { Supplier },
 } = require('./helpers/factories');
 
-describe('supplier avatar to company image sync', () => {
-  it('copies avatar to supplier logo when no dedicated company logo exists', async () => {
+describe('supplier avatar and company logo separation', () => {
+  it('does not copy avatar to supplier logo when no dedicated company logo exists', async () => {
     const supplierUser = await createUser({
       role: 'supplier',
       email: 'supplier-avatar-sync@example.com',
@@ -27,7 +27,6 @@ describe('supplier avatar to company image sync', () => {
       .set(authHeader(tokenForUser(supplierUser)))
       .send({
         name: supplierUser.name,
-        email: supplierUser.email,
         avatar: avatarUrl,
       })
       .expect(200);
@@ -36,7 +35,7 @@ describe('supplier avatar to company image sync', () => {
     expect(response.body.data.avatar).toBe(avatarUrl);
 
     const storedSupplier = await Supplier.findById(supplier._id);
-    expect(storedSupplier.logo).toBe(avatarUrl);
+    expect(storedSupplier.logo).toBe('no-logo.jpg');
   });
 
   it('does not overwrite an existing dedicated supplier logo', async () => {
@@ -57,7 +56,6 @@ describe('supplier avatar to company image sync', () => {
       .set(authHeader(tokenForUser(supplierUser)))
       .send({
         name: supplierUser.name,
-        email: supplierUser.email,
         avatar: avatarUrl,
       })
       .expect(200);

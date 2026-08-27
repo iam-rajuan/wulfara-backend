@@ -177,6 +177,9 @@ exports.getSuppliers = async (req, res) => {
   try {
     let query;
     const andConditions = [];
+    const keyword = typeof req.query.keyword === 'string' ? req.query.keyword.trim() : '';
+    const locationQuery = typeof req.query.location === 'string' ? req.query.location.trim() : '';
+    const distanceQuery = typeof req.query.distance === 'string' ? req.query.distance.trim() : '';
 
     // Copy req.query
     const reqQuery = { ...req.query };
@@ -209,16 +212,31 @@ exports.getSuppliers = async (req, res) => {
       }
     }
 
-    if (req.query.location) {
-      reqQuery['location.formattedAddress'] = { $regex: req.query.location, $options: 'i' };
+    if (locationQuery) {
+      reqQuery['location.formattedAddress'] = { $regex: locationQuery, $options: 'i' };
     }
 
-    if (req.query.keyword) {
+    if (keyword) {
+      const keywordRegex = { $regex: keyword, $options: 'i' };
+      const matchingCategories = await Category.find({
+        name: keywordRegex,
+      }).select('_id');
+      const matchingCategoryIds = matchingCategories.map((category) => category._id);
+
       andConditions.push({
         $or: [
-        { companyName: { $regex: req.query.keyword, $options: 'i' } },
-        { description: { $regex: req.query.keyword, $options: 'i' } }
-      ],
+          { companyName: keywordRegex },
+          { description: keywordRegex },
+          { coreProducts: keywordRegex },
+          { certifications: keywordRegex },
+          { serviceAreas: keywordRegex },
+          { supplierType: keywordRegex },
+          { contactEmail: keywordRegex },
+          { contactPhone: keywordRegex },
+          { website: keywordRegex },
+          { 'location.formattedAddress': keywordRegex },
+          ...(matchingCategoryIds.length > 0 ? [{ categories: { $in: matchingCategoryIds } }] : []),
+        ],
       });
     }
 
@@ -233,6 +251,22 @@ exports.getSuppliers = async (req, res) => {
       reqQuery.location = {
         $geoWithin: { $centerSphere: [[lng, lat], radius] }
       };
+      delete reqQuery['location.formattedAddress'];
+    } else if (locationQuery && distanceQuery) {
+      const geoResult = await geocodeAddress(locationQuery);
+
+      if (geoResult?.coordinates?.length === 2) {
+        const [lng, lat] = geoResult.coordinates;
+        const distance = parseInt(distanceQuery, 10);
+
+        if (!Number.isNaN(lat) && !Number.isNaN(lng) && !Number.isNaN(distance)) {
+          const radius = distance / 6378.1;
+          reqQuery.location = {
+            $geoWithin: { $centerSphere: [[lng, lat], radius] }
+          };
+          delete reqQuery['location.formattedAddress'];
+        }
+      }
     }
 
     // Only show listed suppliers to the public, unless admin is requesting

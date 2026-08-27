@@ -49,6 +49,18 @@ const userSchema = new mongoose.Schema({
     default: ''
   },
   verifyCode: String,
+  pendingEmail: {
+    type: String,
+    default: ''
+  },
+  emailChangeCode: {
+    type: String,
+    default: ''
+  },
+  emailChangeExpires: {
+    type: Date,
+    default: null
+  },
   resetPasswordToken: String,
   resetPasswordExpire: Date,
 }, { timestamps: true });

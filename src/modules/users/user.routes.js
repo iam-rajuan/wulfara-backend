@@ -7,7 +7,9 @@ const {
   deleteUser,
   getMe,
   updateMe,
-  getUploadUrl
+  getUploadUrl,
+  requestEmailChangeOtp,
+  verifyEmailChangeOtp,
 } = require('./user.controller');
 
 const router = express.Router();
@@ -19,6 +21,9 @@ router.use(protect);
 router.route('/me')
   .get(getMe)
   .put(updateMe);
+
+router.post('/me/email-change/request', requestEmailChangeOtp);
+router.post('/me/email-change/verify', verifyEmailChangeOtp);
 
 router.post('/upload-url', getUploadUrl);
 

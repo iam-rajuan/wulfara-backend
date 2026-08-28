@@ -10,7 +10,7 @@ const {
   registerAndVerifySupplier,
   tokenForUser,
   uniqueEmail,
-  models: { Supplier },
+  models: { Supplier, Payment },
 } = require('./helpers/factories');
 const { syncSupplierLifecycle } = require('../src/modules/suppliers/supplierLifecycle');
 
@@ -216,5 +216,121 @@ describe('public directory and admin subscription visibility', () => {
     expect(response.body.data[0].user.email).toBe(activeUser.email);
     expect(response.body.data[0].selectedPlan.name).toBe(plan.name);
     expect(response.body.data[0].selectedPlan.price).toBe(plan.price);
+  });
+
+  it('returns a real admin overview for subscription packages', async () => {
+    const category = await createCategory({ name: 'Overview Category' });
+    const activePlan = await createPricingPlan({
+      name: 'Overview Premium',
+      slug: 'overview-premium',
+      price: 320,
+      isActive: true,
+    });
+    const draftPlan = await createPricingPlan({
+      name: 'Overview Draft',
+      slug: 'overview-draft',
+      price: 120,
+      isActive: false,
+    });
+    const admin = await createUser({ role: 'admin', email: uniqueEmail('subs-overview-admin') });
+    const activeUser = await createUser({ role: 'supplier', email: uniqueEmail('subs-overview-active') });
+    const inactiveUser = await createUser({ role: 'supplier', email: uniqueEmail('subs-overview-inactive') });
+
+    const activeSupplier = await createSupplierForUser(activeUser, {
+      categories: [category._id],
+      selectedPlan: activePlan._id,
+      selectedBillingCycle: 'Monthly',
+      selectedListingPeriod: '12-months',
+    });
+    await listSupplier(activeSupplier, category._id, activePlan);
+
+    await createSupplierForUser(inactiveUser, {
+      categories: [category._id],
+      selectedPlan: draftPlan._id,
+      selectedBillingCycle: 'Monthly',
+      subscriptionStatus: 'inactive',
+      paymentStatus: 'unpaid',
+      listingStatus: 'Pending',
+      isApproved: false,
+    });
+
+    await Payment.create({
+      supplier: activeSupplier._id,
+      plan: activePlan._id,
+      planName: activePlan.name,
+      billingCycle: 'Monthly',
+      listingPeriod: '12-months',
+      amount: 320,
+      status: 'paid',
+      createdAt: new Date('2026-08-12T10:00:00.000Z'),
+      updatedAt: new Date('2026-08-12T10:00:00.000Z'),
+    });
+
+    await request(app).get('/api/v1/subscriptions/admin/overview').expect(401);
+
+    const response = await request(app)
+      .get('/api/v1/subscriptions/admin/overview')
+      .set(authHeader(tokenForUser(admin)))
+      .expect(200);
+
+    expect(response.body.data.metrics.activePackages).toBe(1);
+    expect(response.body.data.metrics.paidSuppliers).toBe(1);
+    expect(response.body.data.metrics.monthlyRevenue).toBe(320);
+    expect(response.body.data.metrics.packageConversion).toBe(50);
+    expect(response.body.data.plans).toHaveLength(2);
+
+    const returnedActivePlan = response.body.data.plans.find((plan) => plan._id === activePlan._id.toString());
+    const returnedDraftPlan = response.body.data.plans.find((plan) => plan._id === draftPlan._id.toString());
+
+    expect(returnedActivePlan.activeSuppliersCount).toBe(1);
+    expect(returnedActivePlan.lifetimeRevenue).toBe(320);
+    expect(returnedDraftPlan.activeSuppliersCount).toBe(0);
+
+    const filteredResponse = await request(app)
+      .get('/api/v1/subscriptions/admin/overview?status=draft')
+      .set(authHeader(tokenForUser(admin)))
+      .expect(200);
+
+    expect(filteredResponse.body.data.plans).toHaveLength(1);
+    expect(filteredResponse.body.data.plans[0]._id).toBe(draftPlan._id.toString());
+  });
+
+  it('returns admin-only plan detail and full plan catalog including drafts', async () => {
+    const admin = await createUser({ role: 'admin', email: uniqueEmail('subs-admin-plans') });
+    const supplier = await createUser({ role: 'supplier', email: uniqueEmail('subs-supplier-plans') });
+    const activePlan = await createPricingPlan({
+      name: 'Admin Visible Active',
+      slug: 'admin-visible-active',
+      isActive: true,
+    });
+    const draftPlan = await createPricingPlan({
+      name: 'Admin Visible Draft',
+      slug: 'admin-visible-draft',
+      isActive: false,
+    });
+
+    await request(app).get('/api/v1/subscriptions/admin/plans').expect(401);
+
+    await request(app)
+      .get('/api/v1/subscriptions/admin/plans')
+      .set(authHeader(tokenForUser(supplier)))
+      .expect(403);
+
+    const plansResponse = await request(app)
+      .get('/api/v1/subscriptions/admin/plans')
+      .set(authHeader(tokenForUser(admin)))
+      .expect(200);
+
+    const returnedIds = plansResponse.body.data.map((plan) => plan._id);
+    expect(returnedIds).toContain(activePlan._id.toString());
+    expect(returnedIds).toContain(draftPlan._id.toString());
+
+    const singlePlanResponse = await request(app)
+      .get(`/api/v1/subscriptions/admin/plans/${draftPlan._id}`)
+      .set(authHeader(tokenForUser(admin)))
+      .expect(200);
+
+    expect(singlePlanResponse.body.data._id).toBe(draftPlan._id.toString());
+    expect(singlePlanResponse.body.data.isActive).toBe(false);
   });
 });

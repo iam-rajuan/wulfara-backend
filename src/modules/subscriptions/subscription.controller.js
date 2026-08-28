@@ -17,6 +17,243 @@ const {
   syncSupplierLifecycle,
 } = require('../suppliers/supplierLifecycle');
 
+const DEFAULT_LISTING_PERIODS = [
+  { durationMonths: 12, isActive: true, discountPercent: 0, customLabel: '' },
+  { durationMonths: 24, isActive: true, discountPercent: 15, customLabel: '' },
+  { durationMonths: 48, isActive: true, discountPercent: 25, customLabel: '' },
+];
+
+const cloneDefaultListingPeriods = () =>
+  DEFAULT_LISTING_PERIODS.map((period) => ({ ...period }));
+
+const parseDurationMonths = (value) => {
+  if (typeof value === 'number') {
+    return value;
+  }
+
+  if (typeof value !== 'string') {
+    return Number.NaN;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return Number.NaN;
+  }
+
+  if (!/^\d+$/.test(trimmed)) {
+    return Number.NaN;
+  }
+
+  return Number.parseInt(trimmed, 10);
+};
+
+const normalizeListingPeriods = (listingPeriods, { fallbackToDefault = false } = {}) => {
+  if (listingPeriods === undefined) {
+    return fallbackToDefault ? cloneDefaultListingPeriods() : undefined;
+  }
+
+  if (!Array.isArray(listingPeriods)) {
+    const error = new Error('Listing periods must be an array.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (listingPeriods.length === 0) {
+    const error = new Error('At least one listing period is required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalized = listingPeriods.map((period, index) => {
+    const durationMonths = parseDurationMonths(period?.durationMonths);
+    if (!Number.isInteger(durationMonths)) {
+      const error = new Error(`Listing period #${index + 1}: duration must be an integer.`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (durationMonths <= 0) {
+      const error = new Error(`Listing period #${index + 1}: duration must be greater than 0.`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const rawDiscount = period?.discountPercent ?? 0;
+    const discountPercent = rawDiscount === '' ? 0 : Number(rawDiscount);
+    if (Number.isNaN(discountPercent) || discountPercent < 0 || discountPercent > 100) {
+      const error = new Error(`Listing period #${index + 1}: discount must be between 0 and 100.`);
+      error.statusCode = 400;
+      throw error;
+    }
+
+    return {
+      durationMonths,
+      isActive: period?.isActive !== false,
+      discountPercent,
+      customLabel: typeof period?.customLabel === 'string' ? period.customLabel.trim() : '',
+    };
+  });
+
+  const duplicateDuration = normalized.find(
+    (period, index) =>
+      normalized.findIndex((candidate) => candidate.durationMonths === period.durationMonths) !== index
+  );
+
+  if (duplicateDuration) {
+    const error = new Error(`A ${duplicateDuration.durationMonths}-month listing period already exists.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  normalized.sort((a, b) => a.durationMonths - b.durationMonths);
+  return normalized;
+};
+
+const serializePlan = (plan) => {
+  const planObject = plan?.toObject ? plan.toObject() : plan;
+
+  return {
+    ...planObject,
+    listingPeriods: normalizeListingPeriods(planObject?.listingPeriods, { fallbackToDefault: true }),
+  };
+};
+
+const normalizePlanIdentity = (value) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const ensureUniquePlanFields = async ({ id, internalName, name, slug }) => {
+  const normalizedInternalName = normalizePlanIdentity(internalName);
+  const normalizedName = normalizePlanIdentity(name);
+  const normalizedSlug = normalizePlanIdentity(slug);
+
+  if (!normalizedInternalName && !normalizedName && !normalizedSlug) {
+    return;
+  }
+
+  const plans = await PricingPlan.find(id ? { _id: { $ne: id } } : {}).select('internalName name slug');
+
+  const duplicatePlan = plans.find((plan) => {
+    const planInternalName = normalizePlanIdentity(plan.internalName);
+    const planName = normalizePlanIdentity(plan.name);
+    const planSlug = normalizePlanIdentity(plan.slug);
+
+    return (
+      (normalizedInternalName && planInternalName === normalizedInternalName) ||
+      (normalizedName && planName === normalizedName) ||
+      (normalizedSlug && planSlug === normalizedSlug)
+    );
+  });
+
+  if (!duplicatePlan) {
+    return;
+  }
+
+  const duplicateField =
+    normalizedSlug && normalizePlanIdentity(duplicatePlan.slug) === normalizedSlug
+      ? 'slug'
+      : normalizedInternalName &&
+          normalizePlanIdentity(duplicatePlan.internalName) === normalizedInternalName
+        ? 'internal name'
+        : 'display name';
+
+  const error = new Error(`A pricing plan with this ${duplicateField} already exists.`);
+  error.statusCode = 400;
+  throw error;
+};
+
+const ACTIVE_SUPPLIER_MATCH = {
+  subscriptionStatus: 'active',
+  paymentStatus: 'paid',
+  isApproved: true,
+  listingStatus: 'Approved',
+};
+
+const buildAdminSubscriptionOverview = async ({ status = 'all' } = {}) => {
+  const normalizedStatus = String(status || 'all').trim().toLowerCase();
+  const planMatch = {};
+
+  if (normalizedStatus === 'active') {
+    planMatch.isActive = true;
+  } else if (normalizedStatus === 'draft') {
+    planMatch.isActive = false;
+  }
+
+  const [plans, activeSupplierCounts, paidSuppliers, paidPayments, totalSuppliers] = await Promise.all([
+    PricingPlan.find(planMatch).sort({ createdAt: -1 }),
+    Supplier.aggregate([
+      { $match: ACTIVE_SUPPLIER_MATCH },
+      {
+        $group: {
+          _id: '$selectedPlan',
+          count: { $sum: 1 },
+        },
+      },
+    ]),
+    Supplier.countDocuments(ACTIVE_SUPPLIER_MATCH),
+    Payment.find({ status: 'paid' }).select('supplier plan amount createdAt'),
+    Supplier.countDocuments(),
+  ]);
+
+  const supplierCountByPlanId = new Map(
+    activeSupplierCounts
+      .filter((entry) => entry?._id)
+      .map((entry) => [entry._id.toString(), entry.count])
+  );
+
+  const now = new Date();
+  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+
+  const monthlyRevenue = paidPayments.reduce((total, payment) => {
+    const createdAt = payment?.createdAt ? new Date(payment.createdAt) : null;
+    if (!createdAt || createdAt < currentMonthStart || createdAt >= nextMonthStart) {
+      return total;
+    }
+
+    return total + Number(payment.amount || 0);
+  }, 0);
+
+  const revenueByPlanId = new Map();
+  paidPayments.forEach((payment) => {
+    if (!payment?.plan) {
+      return;
+    }
+
+    const planId = payment.plan.toString();
+    const nextTotal = (revenueByPlanId.get(planId) || 0) + Number(payment.amount || 0);
+    revenueByPlanId.set(planId, nextTotal);
+  });
+
+  const plansWithStats = plans.map((plan) => {
+    const serialized = serializePlan(plan);
+    const planId = plan._id.toString();
+
+    return {
+      ...serialized,
+      activeSuppliersCount: supplierCountByPlanId.get(planId) || 0,
+      lifetimeRevenue: revenueByPlanId.get(planId) || 0,
+    };
+  });
+
+  const activePlansCount = plansWithStats.filter((plan) => plan.isActive).length;
+  const packageConversion =
+    totalSuppliers > 0 ? Number(((paidSuppliers / totalSuppliers) * 100).toFixed(1)) : 0;
+
+  return {
+    plans: plansWithStats,
+    metrics: {
+      activePackages: activePlansCount,
+      paidSuppliers,
+      monthlyRevenue,
+      packageConversion,
+      totalSuppliers,
+    },
+    filters: {
+      status: normalizedStatus,
+    },
+  };
+};
+
 const getSupplierForCheckout = async (req) => {
   if (req.user.role === 'admin' && req.body.supplierId) {
     return Supplier.findById(req.body.supplierId);
@@ -350,12 +587,7 @@ exports.getAllPayments = async (req, res) => {
 // @access  Private/Admin
 exports.getActiveSubscriptions = async (req, res) => {
   try {
-    const suppliers = await Supplier.find({
-      subscriptionStatus: 'active',
-      paymentStatus: 'paid',
-      isApproved: true,
-      listingStatus: 'Approved',
-    })
+    const suppliers = await Supplier.find(ACTIVE_SUPPLIER_MATCH)
       .populate({ path: 'user', select: 'name email status isVerified' })
       .populate({ path: 'selectedPlan', select: 'name slug price billingCycle isActive' })
       .sort('-updatedAt');
@@ -380,7 +612,7 @@ exports.getPlans = async (req, res) => {
     res.status(200).json({
       success: true,
       count: plans.length,
-      data: plans,
+      data: plans.map((plan) => serializePlan(plan)),
       addons: [
         {
           code: FEATURED_HERO_PLACEMENT.code,
@@ -404,7 +636,54 @@ exports.getPlan = async (req, res) => {
     if (!plan) {
       return res.status(404).json({ success: false, message: 'Plan not found' });
     }
-    res.status(200).json({ success: true, data: plan });
+    res.status(200).json({ success: true, data: serializePlan(plan) });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get subscription package overview for admin
+// @route   GET /api/v1/subscriptions/admin/overview
+// @access  Private/Admin
+exports.getAdminSubscriptionOverview = async (req, res) => {
+  try {
+    const overview = await buildAdminSubscriptionOverview({ status: req.query.status });
+    res.status(200).json({
+      success: true,
+      data: overview,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get all pricing plans for admin
+// @route   GET /api/v1/subscriptions/admin/plans
+// @access  Private/Admin
+exports.getAdminPlans = async (req, res) => {
+  try {
+    const plans = await PricingPlan.find().sort({ createdAt: -1 });
+    res.status(200).json({
+      success: true,
+      count: plans.length,
+      data: plans.map((plan) => serializePlan(plan)),
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Get single pricing plan for admin
+// @route   GET /api/v1/subscriptions/admin/plans/:id
+// @access  Private/Admin
+exports.getAdminPlan = async (req, res) => {
+  try {
+    const plan = await PricingPlan.findById(req.params.id);
+    if (!plan) {
+      return res.status(404).json({ success: false, message: 'Plan not found' });
+    }
+
+    res.status(200).json({ success: true, data: serializePlan(plan) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -415,10 +694,16 @@ exports.getPlan = async (req, res) => {
 // @access  Private (Admin only)
 exports.createPlan = async (req, res) => {
   try {
+    req.body.listingPeriods = normalizeListingPeriods(req.body.listingPeriods, { fallbackToDefault: true });
+    await ensureUniquePlanFields({
+      internalName: req.body.internalName,
+      name: req.body.name,
+      slug: req.body.slug,
+    });
     const plan = await PricingPlan.create(req.body);
-    res.status(201).json({ success: true, data: plan });
+    res.status(201).json({ success: true, data: serializePlan(plan) });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.statusCode || 500).json({ success: false, message: error.message });
   }
 };
 
@@ -427,18 +712,36 @@ exports.createPlan = async (req, res) => {
 // @access  Private (Admin only)
 exports.updatePlan = async (req, res) => {
   try {
+    const existingPlan = await PricingPlan.findById(req.params.id);
+    if (!existingPlan) {
+      return res.status(404).json({ success: false, message: 'Plan not found' });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'listingPeriods')) {
+      req.body.listingPeriods = normalizeListingPeriods(req.body.listingPeriods);
+    }
+
+    await ensureUniquePlanFields({
+      id: existingPlan._id,
+      internalName: Object.prototype.hasOwnProperty.call(req.body, 'internalName')
+        ? req.body.internalName
+        : existingPlan.internalName,
+      name: Object.prototype.hasOwnProperty.call(req.body, 'name')
+        ? req.body.name
+        : existingPlan.name,
+      slug: Object.prototype.hasOwnProperty.call(req.body, 'slug')
+        ? req.body.slug
+        : existingPlan.slug,
+    });
+
     const plan = await PricingPlan.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true
     });
 
-    if (!plan) {
-      return res.status(404).json({ success: false, message: 'Plan not found' });
-    }
-
-    res.status(200).json({ success: true, data: plan });
+    res.status(200).json({ success: true, data: serializePlan(plan) });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.statusCode || 500).json({ success: false, message: error.message });
   }
 };
 

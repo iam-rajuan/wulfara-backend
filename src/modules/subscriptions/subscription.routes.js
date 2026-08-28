@@ -8,7 +8,10 @@ const {
   updatePlan,
   deletePlan,
   getAllPayments,
-  getActiveSubscriptions
+  getActiveSubscriptions,
+  getAdminSubscriptionOverview,
+  getAdminPlans,
+  getAdminPlan,
 } = require('./subscription.controller');
 
 const router = express.Router();
@@ -30,5 +33,8 @@ router.route('/plans/:id')
 // Admin Payments Route
 router.get('/admin/payments', protect, authorize('admin'), authorizePermissions('revenue.view'), getAllPayments);
 router.get('/admin/active', protect, authorize('admin'), authorizePermissions('subscriptions.read'), getActiveSubscriptions);
+router.get('/admin/overview', protect, authorize('admin'), authorizePermissions('subscriptions.read'), getAdminSubscriptionOverview);
+router.get('/admin/plans', protect, authorize('admin'), authorizePermissions('subscriptions.manage'), getAdminPlans);
+router.get('/admin/plans/:id', protect, authorize('admin'), authorizePermissions('subscriptions.manage'), getAdminPlan);
 
 module.exports = router;

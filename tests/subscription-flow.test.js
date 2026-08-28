@@ -237,6 +237,68 @@ describe('subscription and stripe flow', () => {
     expect(await Payment.countDocuments()).toBe(0);
   });
 
+  it('only exposes active admin-created plans to suppliers', async () => {
+    const activePlan = await createPricingPlan({
+      name: 'Active Supplier Plan',
+      slug: `active-supplier-plan-${Date.now()}`,
+      price: 99,
+      iconKey: 'rocket',
+      badgeText: 'Best Value',
+      accentColor: '#10B981',
+      features: ['Verified supplier badge', 'Priority support'],
+      isActive: true,
+    });
+    const archivedPlan = await createPricingPlan({
+      name: 'Archived Supplier Plan',
+      slug: `archived-supplier-plan-${Date.now()}`,
+      price: 49,
+      iconKey: 'shield',
+      isActive: false,
+    });
+
+    const response = await request(app).get('/api/v1/subscriptions/plans').expect(200);
+    const planIds = response.body.data.map((plan) => plan._id);
+
+    expect(planIds).toContain(activePlan._id.toString());
+    expect(planIds).not.toContain(archivedPlan._id.toString());
+    expect(response.body.data.find((plan) => plan._id === activePlan._id.toString())).toMatchObject({
+      name: 'Active Supplier Plan',
+      price: 99,
+      iconKey: 'rocket',
+      badgeText: 'Best Value',
+      accentColor: '#10B981',
+      features: ['Verified supplier badge', 'Priority support'],
+      isActive: true,
+    });
+  });
+
+  it('blocks saved selections and Stripe checkout for archived plans', async () => {
+    const { user, supplier } = await createCheckoutReadySupplier();
+    const archivedPlan = await createPricingPlan({
+      name: 'Archived Checkout Plan',
+      slug: `archived-checkout-plan-${Date.now()}`,
+      price: 149,
+      isActive: false,
+    });
+
+    const saveResponse = await request(app)
+      .put('/api/v1/suppliers/onboarding/subscription')
+      .set(authHeader(tokenForUser(user)))
+      .send({ planId: archivedPlan._id.toString() })
+      .expect(404);
+
+    expect(saveResponse.body.message).toContain('inactive');
+
+    const checkoutResponse = await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({ planId: archivedPlan._id.toString() })
+      .expect(404);
+
+    expect(checkoutResponse.body.message).toContain('inactive');
+    expect(await Payment.countDocuments({ supplier: supplier._id })).toBe(0);
+  });
+
   it('activates featured hero placement exactly once on successful webhook delivery and keeps wrong metadata from activating the wrong supplier', async () => {
     const { plan, supplier: targetSupplier, user } = await createCheckoutReadySupplier();
     const { supplier: otherSupplier } = await createCheckoutReadySupplier();

@@ -95,6 +95,10 @@ describe('subscription and stripe flow', () => {
       slug: `monthly-premium-${Date.now()}`,
       price: 149,
       billingCycle: 'Monthly',
+      listingPeriods: [
+        { durationMonths: 10, discountPercent: 0, isActive: true },
+        { durationMonths: 20, discountPercent: 10, isActive: true },
+      ],
     });
 
     await request(app)
@@ -112,10 +116,10 @@ describe('subscription and stripe flow', () => {
 
     expect(latestCall.line_items[0].price_data.unit_amount).toBe(14900);
     expect(latestCall.metadata.billingCycle).toBe('Monthly');
-    expect(latestCall.metadata.listingPeriod).toBe('1 Month');
+    expect(latestCall.metadata.listingPeriod).toBe('10 Months');
     expect(refreshedSupplier.selectedPlan.toString()).toBe(monthlyPlan._id.toString());
     expect(refreshedSupplier.selectedBillingCycle).toBe('Monthly');
-    expect(refreshedSupplier.selectedListingPeriod).toBe('1 Month');
+    expect(refreshedSupplier.selectedListingPeriod).toBe('10 Months');
   });
 
   it('uses the selected yearly pricing plan as the only source of checkout amount and billing metadata', async () => {
@@ -169,6 +173,78 @@ describe('subscription and stripe flow', () => {
 
     expect(refreshedSupplier.selectedBillingCycle).toBe(plan.billingCycle);
     expect(refreshedSupplier.selectedListingPeriod).toBe('12 Months');
+  });
+
+  it('preserves a valid admin-configured listing period separately from the billing cycle', async () => {
+    const { user, supplier } = await createCheckoutReadySupplier();
+    const customPlan = await createPricingPlan({
+      name: 'Custom Duration Plan',
+      slug: `custom-duration-${Date.now()}`,
+      price: 320,
+      billingCycle: 'Monthly',
+      listingPeriods: [
+        { durationMonths: 10, discountPercent: 0, isActive: true },
+        { durationMonths: 24, discountPercent: 15, isActive: true },
+      ],
+    });
+
+    const response = await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({
+        planId: customPlan._id.toString(),
+        listingPeriod: '10 Months',
+      })
+      .expect(200);
+
+    const latestCall = stripeFactory.__mock.createSession.mock.calls.at(-1)[0];
+    const payment = await Payment.findOne({ supplier: supplier._id }).sort({ createdAt: -1 });
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+
+    expect(latestCall.metadata.billingCycle).toBe('Monthly');
+    expect(latestCall.metadata.listingPeriod).toBe('10 Months');
+    expect(response.body.orderSummary.listingPeriod).toBe('10 Months');
+    expect(payment.listingPeriod).toBe('10 Months');
+    expect(refreshedSupplier.selectedListingPeriod).toBe('10 Months');
+  });
+
+  it('applies the selected listing period discount to the checkout amount', async () => {
+    const { user, supplier } = await createCheckoutReadySupplier();
+    const discountedPlan = await createPricingPlan({
+      name: 'Discounted Duration Plan',
+      slug: `discounted-duration-${Date.now()}`,
+      price: 100,
+      billingCycle: 'Monthly',
+      listingPeriods: [
+        { durationMonths: 24, discountPercent: 8, isActive: true },
+        { durationMonths: 45, discountPercent: 10, isActive: true },
+      ],
+    });
+
+    const response = await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({
+        planId: discountedPlan._id.toString(),
+        listingPeriod: '24 Months',
+      })
+      .expect(200);
+
+    const latestCall = stripeFactory.__mock.createSession.mock.calls.at(-1)[0];
+    const payment = await Payment.findOne({ supplier: supplier._id }).sort({ createdAt: -1 });
+
+    expect(latestCall.line_items[0].price_data.unit_amount).toBe(9200);
+    expect(latestCall.metadata.listingPeriod).toBe('24 Months');
+    expect(latestCall.metadata.listingDiscountPercent).toBe('8');
+    expect(response.body.orderSummary).toMatchObject({
+      listingPeriod: '24 Months',
+      listingDiscountPercent: 8,
+      basePrice: 92,
+      totalDueToday: 92,
+    });
+    expect(payment.listingPeriod).toBe('24 Months');
+    expect(payment.baseAmount).toBe(92);
+    expect(payment.amount).toBe(92);
   });
 
   it('adds featured hero placement to the backend-calculated Stripe total and ignores tampered frontend pricing', async () => {

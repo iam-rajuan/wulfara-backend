@@ -35,7 +35,15 @@ describe('supplier lifecycle acceptance', () => {
 
   it('persists onboarding progress and resumes correctly after relogin', async () => {
     const category = await createCategory({ name: 'Steel' });
-    const activePlan = await createPricingPlan({ name: 'Pro', slug: 'pro-plan' });
+    const activePlan = await createPricingPlan({
+      name: 'Pro',
+      slug: 'pro-plan',
+      billingCycle: 'Monthly',
+      listingPeriods: [
+        { durationMonths: 10, discountPercent: 0, isActive: true },
+        { durationMonths: 24, discountPercent: 15, isActive: true },
+      ],
+    });
     const inactivePlan = await createPricingPlan({
       name: 'Dormant',
       slug: 'inactive-plan',
@@ -134,7 +142,7 @@ describe('supplier lifecycle acceptance', () => {
     supplier = await Supplier.findOne({ user: user._id });
     expect(supplier.selectedPlan.toString()).toBe(activePlan._id.toString());
     expect(supplier.selectedBillingCycle).toBe(activePlan.billingCycle);
-    expect(supplier.selectedListingPeriod).toBe('12 Months');
+    expect(supplier.selectedListingPeriod).toBe('10 Months');
     expect(supplier.subscriptionStatus).toBe('pending');
     expect(supplier.paymentStatus).toBe('unpaid');
     expect(supplier.onboardingStep).toBe('payment');

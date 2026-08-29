@@ -11,9 +11,11 @@ const {
   sumAddonAmount,
 } = require('./subscriptionAddons');
 const {
+  calculateDiscountedPlanPrice,
   hasCompanyInfo,
   hasIndustrySelection,
-  deriveListingPeriod,
+  resolvePlanListingPeriodOption,
+  resolvePlanListingPeriod,
   syncSupplierLifecycle,
 } = require('../suppliers/supplierLifecycle');
 
@@ -303,14 +305,16 @@ exports.createCheckoutSession = async (req, res) => {
       });
     }
 
-    const basePrice = Number(plan.price || 0);
+    const resolvedBillingCycle = plan.billingCycle || '';
+    const resolvedListingOption = resolvePlanListingPeriodOption(
+      plan,
+      req.body.listingPeriod || supplierProfile.selectedListingPeriod,
+      resolvedBillingCycle
+    );
+    const resolvedListingPeriod = resolvedListingOption.label;
+    const basePrice = calculateDiscountedPlanPrice(plan.price, resolvedListingOption.discountPercent);
     const addonPrice = sumAddonAmount(addons);
     const totalPrice = basePrice + addonPrice;
-    const resolvedBillingCycle = plan.billingCycle || '';
-    const resolvedListingPeriod = deriveListingPeriod(
-      resolvedBillingCycle,
-      supplierProfile.selectedListingPeriod
-    );
 
     supplierProfile.selectedPlan = plan._id;
     supplierProfile.selectedBillingCycle = resolvedBillingCycle;
@@ -375,6 +379,7 @@ exports.createCheckoutSession = async (req, res) => {
         planTier: inferPlanTier(plan),
         billingCycle: resolvedBillingCycle,
         listingPeriod: resolvedListingPeriod,
+        listingDiscountPercent: String(resolvedListingOption.discountPercent || 0),
         addons: JSON.stringify(addons.map((addon) => addon.code)),
         featuredHeroPlacement: String(
           addons.some((addon) => addon.code === FEATURED_HERO_PLACEMENT.code)
@@ -392,6 +397,7 @@ exports.createCheckoutSession = async (req, res) => {
       planName: plan.name,
       billingCycle: resolvedBillingCycle,
       listingPeriod: resolvedListingPeriod,
+      listingDiscountPercent: resolvedListingOption.discountPercent || 0,
       addons: addons.map((addon) => ({
         code: addon.code,
         name: addon.name,
@@ -412,6 +418,7 @@ exports.createCheckoutSession = async (req, res) => {
         planName: plan.name,
         billingCycle: resolvedBillingCycle,
         listingPeriod: resolvedListingPeriod,
+        listingDiscountPercent: resolvedListingOption.discountPercent || 0,
         addons: addons.map((addon) => ({
           code: addon.code,
           name: addon.name,

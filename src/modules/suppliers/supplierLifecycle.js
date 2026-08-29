@@ -43,6 +43,63 @@ const hasSelectedPlan = (supplier) =>
         (supplier.subscriptionPlan && supplier.subscriptionPlan !== 'free'))
   );
 
+const formatListingPeriodLabel = (durationMonths) => {
+  const duration = Number(durationMonths);
+
+  if (!Number.isInteger(duration) || duration <= 0) {
+    return '';
+  }
+
+  return `${duration} ${duration === 1 ? 'Month' : 'Months'}`;
+};
+
+const normalizeListingPeriodLabel = (value = '') =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+const getPlanListingPeriodOptions = (plan) => {
+  const listingPeriods = Array.isArray(plan?.listingPeriods) ? plan.listingPeriods : [];
+
+  return listingPeriods
+    .filter(
+      (period) =>
+        period?.isActive !== false &&
+        Number.isInteger(Number(period?.durationMonths)) &&
+        Number(period?.durationMonths) > 0
+    )
+    .map((period) => ({
+      durationMonths: Number(period.durationMonths),
+      discountPercent: Number(period.discountPercent || 0),
+      customLabel: typeof period?.customLabel === 'string' ? period.customLabel.trim() : '',
+      label: formatListingPeriodLabel(period.durationMonths),
+    }))
+    .sort((a, b) => a.durationMonths - b.durationMonths);
+};
+
+const normalizeDiscountPercent = (discountPercent = 0) => {
+  const parsedDiscount = Number(discountPercent || 0);
+
+  if (Number.isNaN(parsedDiscount)) {
+    return 0;
+  }
+
+  return Math.min(Math.max(parsedDiscount, 0), 100);
+};
+
+const calculateDiscountedPlanPrice = (basePrice = 0, discountPercent = 0) => {
+  const parsedBasePrice = Number(basePrice || 0);
+  const normalizedDiscount = normalizeDiscountPercent(discountPercent);
+
+  if (Number.isNaN(parsedBasePrice) || parsedBasePrice <= 0) {
+    return 0;
+  }
+
+  return Math.round((parsedBasePrice * (1 - normalizedDiscount / 100)) * 100) / 100;
+};
+
 const deriveListingPeriod = (billingCycle = '', fallback = '') => {
   const normalizedBillingCycle = String(billingCycle || '').trim().toLowerCase();
 
@@ -67,6 +124,39 @@ const deriveListingPeriod = (billingCycle = '', fallback = '') => {
   }
 
   return fallback || billingCycle;
+};
+
+const resolvePlanListingPeriod = (plan, preferredValue = '', billingCycleFallback = '') => {
+  const resolvedOption = resolvePlanListingPeriodOption(plan, preferredValue, billingCycleFallback);
+  return resolvedOption.label;
+};
+
+const resolvePlanListingPeriodOption = (plan, preferredValue = '', billingCycleFallback = '') => {
+  const options = getPlanListingPeriodOptions(plan);
+
+  if (options.length > 0) {
+    const normalizedPreferred = normalizeListingPeriodLabel(preferredValue);
+    const matchedOption = options.find((option) => {
+      const canonical = normalizeListingPeriodLabel(option.label);
+      const singular = normalizeListingPeriodLabel(`${option.durationMonths} month`);
+      const plural = normalizeListingPeriodLabel(`${option.durationMonths} months`);
+
+      return normalizedPreferred && (
+        normalizedPreferred === canonical ||
+        normalizedPreferred === singular ||
+        normalizedPreferred === plural
+      );
+    });
+
+    return matchedOption || options[0];
+  }
+
+  return {
+    durationMonths: null,
+    discountPercent: 0,
+    customLabel: '',
+    label: deriveListingPeriod(billingCycleFallback || plan?.billingCycle || '', preferredValue),
+  };
 };
 
 const isSupplierListed = (supplier) =>
@@ -142,7 +232,12 @@ module.exports = {
   hasCompanyInfo,
   hasIndustrySelection,
   hasSelectedPlan,
+  calculateDiscountedPlanPrice,
+  formatListingPeriodLabel,
+  getPlanListingPeriodOptions,
   deriveListingPeriod,
+  resolvePlanListingPeriod,
+  resolvePlanListingPeriodOption,
   isSupplierListed,
   syncSupplierLifecycle,
 };

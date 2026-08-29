@@ -12,7 +12,7 @@ const {
   getOnboardingRoute,
   hasCompanyInfo,
   hasIndustrySelection,
-  deriveListingPeriod,
+  resolvePlanListingPeriod,
   isSupplierListed,
   syncSupplierLifecycle,
 } = require('./supplierLifecycle');
@@ -997,9 +997,10 @@ exports.saveOnboardingSubscription = async (req, res) => {
     }
 
     const resolvedBillingCycle = plan.billingCycle || '';
-    const resolvedListingPeriod = deriveListingPeriod(
-      resolvedBillingCycle,
-      supplier.selectedListingPeriod
+    const resolvedListingPeriod = resolvePlanListingPeriod(
+      plan,
+      req.body.listingPeriod || supplier.selectedListingPeriod,
+      resolvedBillingCycle
     );
 
     supplier.selectedPlan = plan._id;

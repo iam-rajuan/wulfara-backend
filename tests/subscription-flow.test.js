@@ -243,6 +243,7 @@ describe('subscription and stripe flow', () => {
       totalDueToday: 92,
     });
     expect(payment.listingPeriod).toBe('24 Months');
+    expect(payment.listingDiscountPercent).toBe(8);
     expect(payment.baseAmount).toBe(92);
     expect(payment.amount).toBe(92);
   });
@@ -452,6 +453,53 @@ describe('subscription and stripe flow', () => {
     expect(refreshedTarget.subscriptionStatus).toBe('active');
     expect(refreshedTarget.featuredHeroPlacement.enabled).toBe(true);
     expect(payments).toHaveLength(1);
+  });
+
+  it('does not activate a supplier when Stripe paid amount does not match the pending checkout', async () => {
+    const { plan, supplier, user } = await createCheckoutReadySupplier();
+
+    await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({
+        planId: plan._id.toString(),
+      })
+      .expect(200);
+
+    const event = {
+      type: 'checkout.session.completed',
+      data: {
+        object: {
+          id: 'cs_test_default',
+          client_reference_id: supplier._id.toString(),
+          amount_total: 100,
+          payment_status: 'paid',
+          customer: 'cus_amount_mismatch',
+          metadata: {
+            supplierId: supplier._id.toString(),
+            planId: plan._id.toString(),
+            planName: plan.name,
+            billingCycle: plan.billingCycle,
+            listingPeriod: '12 Months',
+          },
+        },
+      },
+    };
+
+    const response = await request(app)
+      .post('/api/v1/subscriptions/webhook')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify(event))
+      .expect(200);
+
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+    const payment = await Payment.findOne({ supplier: supplier._id });
+
+    expect(response.body.reason).toBe('amount_mismatch');
+    expect(refreshedSupplier.subscriptionStatus).toBe('pending');
+    expect(refreshedSupplier.paymentStatus).toBe('pending');
+    expect(refreshedSupplier.isApproved).toBe(false);
+    expect(payment.status).toBe('failed');
   });
 
   it('does not activate featured hero placement after failed or cancelled checkout flows', async () => {

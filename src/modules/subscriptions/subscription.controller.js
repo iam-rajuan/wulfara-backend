@@ -1,7 +1,24 @@
 const Supplier = require('../suppliers/supplier.model');
 const Payment = require('./payment.model');
 
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || 'sk_test_dummy');
+const isProduction = process.env.NODE_ENV === 'production';
+const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
+
+if (isProduction) {
+  if (!stripeSecretKey) {
+    throw new Error('STRIPE_SECRET_KEY is required in production.');
+  }
+
+  if (!stripeSecretKey.startsWith('sk_live_')) {
+    throw new Error('STRIPE_SECRET_KEY must be a live secret key in production.');
+  }
+
+  if (!process.env.STRIPE_WEBHOOK_SECRET) {
+    throw new Error('STRIPE_WEBHOOK_SECRET is required in production.');
+  }
+}
+
+const stripe = require('stripe')(stripeSecretKey || 'sk_test_dummy');
 const PricingPlan = require('./pricingPlan.model');
 const { inferPlanTier } = require('./planTier');
 const { resolveDashboardOrigin } = require('../../utils/origins');
@@ -15,7 +32,6 @@ const {
   hasCompanyInfo,
   hasIndustrySelection,
   resolvePlanListingPeriodOption,
-  resolvePlanListingPeriod,
   syncSupplierLifecycle,
 } = require('../suppliers/supplierLifecycle');
 
@@ -27,6 +43,10 @@ const DEFAULT_LISTING_PERIODS = [
 
 const cloneDefaultListingPeriods = () =>
   DEFAULT_LISTING_PERIODS.map((period) => ({ ...period }));
+
+const toCents = (amount = 0) => Math.round(Number(amount || 0) * 100);
+
+const centsMatch = (left = 0, right = 0) => toCents(left) === toCents(right);
 
 const parseDurationMonths = (value) => {
   if (typeof value === 'number') {
@@ -342,8 +362,13 @@ exports.createCheckoutSession = async (req, res) => {
         price_data: {
           currency: 'usd',
           product_data: {
-            name: `WULFARA ${plan.name} Plan - ${resolvedBillingCycle || 'One-Time Payment'}`,
-            description: plan.description || 'B2B Marketplace Supplier Subscription'
+            name: `WULFARA ${plan.name} Plan - ${resolvedListingPeriod}`,
+            description: [
+              plan.description || 'B2B Marketplace Supplier Subscription',
+              resolvedListingOption.discountPercent
+                ? `${resolvedListingOption.discountPercent}% listing-duration discount applied`
+                : '',
+            ].filter(Boolean).join(' - '),
           },
           unit_amount: Math.round(basePrice * 100),
         },
@@ -448,6 +473,8 @@ exports.stripeWebhook = async (req, res) => {
     // Only construct event if a secret is provided, otherwise trust payload (for dev fallback)
     if (process.env.STRIPE_WEBHOOK_SECRET) {
       event = stripe.webhooks.constructEvent(payload, sig, endpointSecret);
+    } else if (isProduction) {
+      return res.status(500).send('Stripe webhook secret is not configured.');
     } else {
       // Parse raw body for dev fallback if no secret is configured
       event = JSON.parse(payload.toString());
@@ -466,6 +493,7 @@ exports.stripeWebhook = async (req, res) => {
     const planTier = session.metadata?.planTier || null;
     const billingCycle = session.metadata?.billingCycle || '';
     const listingPeriod = session.metadata?.listingPeriod || '';
+    const listingDiscountPercent = Number(session.metadata?.listingDiscountPercent || 0);
 
     try {
       const supplierProfile = await Supplier.findById(supplierId);
@@ -473,6 +501,15 @@ exports.stripeWebhook = async (req, res) => {
         const existingPayment = await Payment.findOne({ stripeSessionId: session.id });
         if (existingPayment?.status === 'paid') {
           return res.status(200).json({ received: true, duplicate: true });
+        }
+
+        if (session.payment_status && session.payment_status !== 'paid') {
+          return res.status(200).json({ received: true, pending: true });
+        }
+
+        if (!existingPayment && isProduction) {
+          console.error('Stripe webhook ignored unknown checkout session:', session.id);
+          return res.status(200).json({ received: true, ignored: true, reason: 'unknown_session' });
         }
 
         const selectedPlan = planId ? await PricingPlan.findById(planId) : null;
@@ -505,6 +542,17 @@ exports.stripeWebhook = async (req, res) => {
         const paidAmount = Number(session.amount_total || 0) / 100;
         const baseAmount = existingPayment?.baseAmount ?? Math.max(paidAmount - addonAmount, 0);
 
+        if (existingPayment && !centsMatch(paidAmount, existingPayment.amount)) {
+          existingPayment.status = 'failed';
+          await existingPayment.save();
+          console.error('Stripe webhook amount mismatch:', {
+            sessionId: session.id,
+            paidAmount,
+            expectedAmount: existingPayment.amount,
+          });
+          return res.status(200).json({ received: true, ignored: true, reason: 'amount_mismatch' });
+        }
+
         supplierProfile.subscriptionPlan = inferPlanTier(selectedPlan || planTier || planName);
         supplierProfile.selectedPlan = planId || supplierProfile.selectedPlan;
         supplierProfile.selectedBillingCycle = billingCycle || supplierProfile.selectedBillingCycle;
@@ -529,6 +577,7 @@ exports.stripeWebhook = async (req, res) => {
           existingPayment.planName = planName;
           existingPayment.billingCycle = billingCycle;
           existingPayment.listingPeriod = listingPeriod;
+          existingPayment.listingDiscountPercent = listingDiscountPercent;
           existingPayment.addons = addons;
           existingPayment.baseAmount = baseAmount;
           existingPayment.addonAmount = addonAmount;
@@ -542,6 +591,7 @@ exports.stripeWebhook = async (req, res) => {
             planName,
             billingCycle,
             listingPeriod,
+            listingDiscountPercent,
             addons,
             baseAmount,
             addonAmount,

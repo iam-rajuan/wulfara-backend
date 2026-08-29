@@ -28,6 +28,12 @@ const paymentSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  listingDiscountPercent: {
+    type: Number,
+    default: 0,
+    min: 0,
+    max: 100,
+  },
   addons: {
     type: [{
       code: { type: String, required: true },

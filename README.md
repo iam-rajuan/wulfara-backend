@@ -114,7 +114,7 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
 - The Stripe webhook endpoint is `POST /api/v1/subscriptions/webhook`.
 - A compatibility alias is also available at `POST /webhooks/stripe` if your Stripe endpoint is already pointed there.
 - In local development with ngrok, point Stripe to `https://<your-ngrok-host>/api/v1/subscriptions/webhook` or `https://<your-ngrok-host>/webhooks/stripe`.
-- `STRIPE_MODE` may be `test` or `live`.
+- `STRIPE_MODE` may be `test` or `live`. If omitted, the backend infers the mode from `STRIPE_SECRET_KEY` when possible.
 - `STRIPE_SECRET_KEY` is required to create checkout sessions and must match `STRIPE_MODE`.
 - `STRIPE_WEBHOOK_SECRET` is required to verify Stripe webhook signatures safely and is mandatory in production.
 

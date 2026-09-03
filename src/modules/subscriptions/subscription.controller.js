@@ -1,23 +1,8 @@
 const Supplier = require('../suppliers/supplier.model');
 const Payment = require('./payment.model');
+const { getStripeConfig } = require('./stripeConfig');
 
-const isProduction = process.env.NODE_ENV === 'production';
-const stripeSecretKey = process.env.STRIPE_SECRET_KEY || '';
-
-if (isProduction) {
-  if (!stripeSecretKey) {
-    throw new Error('STRIPE_SECRET_KEY is required in production.');
-  }
-
-  if (!stripeSecretKey.startsWith('sk_live_')) {
-    throw new Error('STRIPE_SECRET_KEY must be a live secret key in production.');
-  }
-
-  if (!process.env.STRIPE_WEBHOOK_SECRET) {
-    throw new Error('STRIPE_WEBHOOK_SECRET is required in production.');
-  }
-}
-
+const { isProduction, stripeSecretKey, stripeWebhookSecret } = getStripeConfig();
 const stripe = require('stripe')(stripeSecretKey || 'sk_test_dummy');
 const PricingPlan = require('./pricingPlan.model');
 const { inferPlanTier } = require('./planTier');
@@ -465,13 +450,13 @@ exports.createCheckoutSession = async (req, res) => {
 exports.stripeWebhook = async (req, res) => {
   const payload = req.body;
   const sig = req.headers['stripe-signature'];
-  const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_dummy';
+  const endpointSecret = stripeWebhookSecret || 'whsec_dummy';
 
   let event;
 
   try {
     // Only construct event if a secret is provided, otherwise trust payload (for dev fallback)
-    if (process.env.STRIPE_WEBHOOK_SECRET) {
+    if (stripeWebhookSecret) {
       event = stripe.webhooks.constructEvent(payload, sig, endpointSecret);
     } else if (isProduction) {
       return res.status(500).send('Stripe webhook secret is not configured.');

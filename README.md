@@ -71,6 +71,7 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
    RESEND_FROM_EMAIL=Wulfara Support <noreply@wulfara.space>
    RESEND_REPLY_TO=support@wulfara.space
 
+   STRIPE_MODE=test
    STRIPE_SECRET_KEY=your_stripe_secret_key
    STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
    WEBSITE_ORIGIN=https://www.your-website.com
@@ -113,8 +114,9 @@ This RESTful API powers a multi-sided marketplace connecting **Buyers** and **Su
 - The Stripe webhook endpoint is `POST /api/v1/subscriptions/webhook`.
 - A compatibility alias is also available at `POST /webhooks/stripe` if your Stripe endpoint is already pointed there.
 - In local development with ngrok, point Stripe to `https://<your-ngrok-host>/api/v1/subscriptions/webhook` or `https://<your-ngrok-host>/webhooks/stripe`.
-- `STRIPE_SECRET_KEY` is required to create checkout sessions.
-- `STRIPE_WEBHOOK_SECRET` is required to verify Stripe webhook signatures safely.
+- `STRIPE_MODE` may be `test` or `live`.
+- `STRIPE_SECRET_KEY` is required to create checkout sessions and must match `STRIPE_MODE`.
+- `STRIPE_WEBHOOK_SECRET` is required to verify Stripe webhook signatures safely and is mandatory in production.
 
 ## 🔒 API Security & Architecture
 - **Role-Based Access Control (RBAC)**: Strict `protect` and `authorize` middlewares separate Buyer, Supplier, and Admin capabilities.

@@ -1,10 +1,13 @@
 const trimOrigin = (value) => (value ? value.replace(/\/+$/, '') : '');
 
 const STATIC_ALLOWED_ORIGINS = [
+  'http://localhost',
   'http://localhost:3000',
   'http://localhost:4173',
+  'http://localhost:4174',
   'http://localhost:5000',
   'http://localhost:5173',
+  'http://localhost:5174',
   'https://wulfara-dashboard-woad.vercel.app',
   'https://wulfara-website-seven.vercel.app',
   'https://wulfara-backend.onrender.com',
@@ -14,18 +17,55 @@ const STATIC_ALLOWED_ORIGINS = [
   'https://api.wulfara.space',
 ];
 
-const isWulfaraSubdomain = (origin) => {
+const splitOrigins = (value) =>
+  (value || '')
+    .split(',')
+    .map((origin) => trimOrigin(origin.trim()))
+    .filter(Boolean);
+
+const getConfiguredOrigins = () => {
+  const envOrigins = [
+    process.env.WEBSITE_ORIGIN,
+    process.env.DASHBOARD_ORIGIN,
+    ...splitOrigins(process.env.CORS_ORIGINS),
+    ...splitOrigins(process.env.ALLOWED_ORIGINS),
+  ];
+
+  return Array.from(
+    new Set(
+      [...STATIC_ALLOWED_ORIGINS, ...envOrigins]
+        .map(trimOrigin)
+        .filter(Boolean)
+    )
+  );
+};
+
+const isLocalhostOrigin = (origin) => {
   try {
-    const host = new URL(origin).hostname;
-    return host.endsWith('.wulfara.space');
+    const { hostname } = new URL(origin);
+    return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]';
   } catch (error) {
     return false;
   }
 };
 
-const getConfiguredOrigins = () => STATIC_ALLOWED_ORIGINS.slice();
+const isOriginAllowed = (origin) => {
+  if (!origin) {
+    return true;
+  }
 
-const isOriginAllowed = () => true;
+  const normalizedOrigin = trimOrigin(origin);
+
+  if (getConfiguredOrigins().includes(normalizedOrigin)) {
+    return true;
+  }
+
+  if (process.env.NODE_ENV !== 'production' && isLocalhostOrigin(normalizedOrigin)) {
+    return true;
+  }
+
+  return false;
+};
 
 const buildCorsOriginHandler = () => (origin, callback) => {
   if (isOriginAllowed(origin)) {

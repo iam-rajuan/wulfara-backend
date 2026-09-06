@@ -162,18 +162,10 @@ const resolvePlanListingPeriodOption = (plan, preferredValue = '', billingCycleF
 const isSupplierListed = (supplier) =>
   Boolean(
     supplier &&
-      (
-        (
-          supplier.subscriptionStatus === 'active' &&
-          supplier.paymentStatus === 'paid' &&
-          supplier.isApproved === true &&
-          supplier.listingStatus === 'Approved'
-        ) ||
-        (
-          supplier.onboardingStep === ONBOARDING_STEPS.LISTED &&
-          supplier.onboardingCompletedAt
-        )
-      )
+      supplier.subscriptionStatus === 'active' &&
+      supplier.paymentStatus === 'paid' &&
+      supplier.isApproved === true &&
+      supplier.listingStatus === 'Approved'
   );
 
 const getNextOnboardingStep = (supplier) => {

@@ -272,35 +272,19 @@ exports.getSuppliers = async (req, res) => {
     // Only show listed suppliers to the public, unless admin is requesting
     if (!req.user || req.user.role !== 'admin') {
       andConditions.push({
-        $or: [
-          {
-            isApproved: true,
-            listingStatus: 'Approved',
-            subscriptionStatus: 'active',
-            paymentStatus: 'paid',
-          },
-          {
-            onboardingStep: 'listed',
-            onboardingCompletedAt: { $ne: null },
-          },
-        ],
+        isApproved: true,
+        listingStatus: 'Approved',
+        subscriptionStatus: 'active',
+        paymentStatus: 'paid',
       });
     }
 
     if (req.query.listed === 'true' || req.query.eligibleForRfq === 'true') {
       andConditions.push({
-        $or: [
-          {
-            isApproved: true,
-            listingStatus: 'Approved',
-            subscriptionStatus: 'active',
-            paymentStatus: 'paid',
-          },
-          {
-            onboardingStep: 'listed',
-            onboardingCompletedAt: { $ne: null },
-          },
-        ],
+        isApproved: true,
+        listingStatus: 'Approved',
+        subscriptionStatus: 'active',
+        paymentStatus: 'paid',
       });
     }
 

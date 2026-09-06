@@ -334,12 +334,12 @@ describe('supplier lifecycle acceptance', () => {
     expect(response.body.data.onboarding.nextRoute).toBe('/subscription');
   });
 
-  it('keeps listed suppliers publicly discoverable even if legacy approval flags drift', async () => {
+  it('does not expose listed suppliers publicly if approval flags drift', async () => {
     const category = await createCategory({ name: 'Public Search Category' });
     const user = await createUser({ role: 'supplier', email: uniqueEmail('public-search') });
     const supplier = await createSupplierForUser(user, {
       companyName: 'Discoverable Supplier',
-      description: 'Supplier that should remain visible in public search.',
+      description: 'Supplier that should not remain visible if approval fields drift.',
       contactEmail: 'public-search@example.com',
       contactPhone: '+15550001234',
       categories: [category._id],
@@ -360,13 +360,13 @@ describe('supplier lifecycle acceptance', () => {
 
     await request(app)
       .get(`/api/v1/suppliers/${supplier._id}`)
-      .expect(200);
+      .expect(403);
 
     const listResponse = await request(app)
       .get('/api/v1/suppliers')
       .expect(200);
 
-    expect(listResponse.body.data.some((entry) => entry._id.toString() === supplier._id.toString())).toBe(true);
+    expect(listResponse.body.data.some((entry) => entry._id.toString() === supplier._id.toString())).toBe(false);
   });
 
   it('blocks buyer accounts from supplier onboarding endpoints', async () => {

@@ -7,6 +7,7 @@ const Category = require('../../src/modules/categories/category.model');
 const PricingPlan = require('../../src/modules/subscriptions/pricingPlan.model');
 const PendingRegistration = require('../../src/modules/auth/pendingRegistration.model');
 const Payment = require('../../src/modules/subscriptions/payment.model');
+const Subscription = require('../../src/modules/subscriptions/subscription.model');
 const generateToken = require('../../src/utils/generateToken');
 const { syncSupplierLifecycle } = require('../../src/modules/suppliers/supplierLifecycle');
 
@@ -139,6 +140,7 @@ module.exports = {
     Payment,
     PendingRegistration,
     PricingPlan,
+    Subscription,
     Supplier,
     User,
   },

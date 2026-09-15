@@ -1,0 +1,86 @@
+const Subscription = require('./subscription.model');
+const Supplier = require('../suppliers/supplier.model');
+const { syncSupplierLifecycle } = require('../suppliers/supplierLifecycle');
+
+const ENDABLE_STATUSES = [
+  'pending_checkout',
+  'incomplete',
+  'active',
+  'trialing',
+  'past_due',
+  'payment_failed',
+  'requires_action',
+  'unpaid',
+];
+
+let expirationScheduler = null;
+
+const expireSupplierForEndedSubscription = async (subscription) => {
+  const supplier = await Supplier.findById(subscription.supplier);
+  if (!supplier) {
+    return;
+  }
+
+  subscription.status = subscription.billingCycleType === 'annual' ? 'expired' : 'completed';
+  subscription.nextPaymentDate = null;
+  await subscription.save();
+
+  supplier.subscriptionStatus = 'inactive';
+  supplier.paymentStatus = 'unpaid';
+  supplier.listingStatus = 'Hidden';
+  syncSupplierLifecycle(supplier);
+  await supplier.save();
+};
+
+const expireElapsedSubscriptions = async ({ supplierId } = {}) => {
+  const now = new Date();
+  const query = {
+    status: { $in: ENDABLE_STATUSES },
+    subscriptionEndDate: { $ne: null, $lte: now },
+  };
+
+  if (supplierId) {
+    query.supplier = supplierId;
+  }
+
+  const subscriptions = await Subscription.find(query);
+  await Promise.all(subscriptions.map(expireSupplierForEndedSubscription));
+  return subscriptions.length;
+};
+
+const startSubscriptionExpirationScheduler = ({
+  intervalMs = Number(process.env.SUBSCRIPTION_EXPIRATION_INTERVAL_MS || 15 * 60 * 1000),
+} = {}) => {
+  if (expirationScheduler || process.env.NODE_ENV === 'test') {
+    return expirationScheduler;
+  }
+
+  const runExpiration = () => {
+    expireElapsedSubscriptions().catch((error) => {
+      console.error('Subscription expiration scheduler failed:', error.message);
+    });
+  };
+
+  runExpiration();
+  expirationScheduler = setInterval(runExpiration, intervalMs);
+  if (typeof expirationScheduler.unref === 'function') {
+    expirationScheduler.unref();
+  }
+  return expirationScheduler;
+};
+
+const stopSubscriptionExpirationScheduler = () => {
+  if (!expirationScheduler) {
+    return;
+  }
+
+  clearInterval(expirationScheduler);
+  expirationScheduler = null;
+};
+
+module.exports = {
+  expireElapsedSubscriptions,
+  expireSupplierForEndedSubscription,
+  startSubscriptionExpirationScheduler,
+  stopSubscriptionExpirationScheduler,
+};

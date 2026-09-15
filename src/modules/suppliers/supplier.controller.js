@@ -6,8 +6,10 @@ const User = require('../users/user.model');
 const Category = require('../categories/category.model');
 const PricingPlan = require('../subscriptions/pricingPlan.model');
 const Payment = require('../subscriptions/payment.model');
+const Subscription = require('../subscriptions/subscription.model');
 const { inferPlanTier } = require('../subscriptions/planTier');
 const { resolveSubscriptionAddons } = require('../subscriptions/subscriptionAddons');
+const { expireElapsedSubscriptions } = require('../subscriptions/subscriptionEntitlement.service');
 const {
   getOnboardingRoute,
   hasCompanyInfo,
@@ -100,6 +102,10 @@ const serializeSupplierForResponse = async (supplier, options = {}) => {
     .populate({ path: 'plan', select: 'name slug price billingCycle isActive' })
     .sort({ createdAt: -1 })
     .lean();
+  const currentSubscription = await Subscription.findOne({ supplier: supplierObject._id })
+    .populate({ path: 'plan', select: 'name slug price billingCycle isActive' })
+    .sort({ createdAt: -1 })
+    .lean();
 
   const monthlyViews = supplierObject.monthlyViews instanceof Map
     ? Object.fromEntries(supplierObject.monthlyViews)
@@ -115,6 +121,7 @@ const serializeSupplierForResponse = async (supplier, options = {}) => {
       totalPaidAmount: sumPaidAmounts(payments),
       history: payments,
     },
+    currentSubscription,
     listingSummary: {
       isPubliclyVisible: isSupplierListed(supplier),
       onboardingStep: supplierObject.onboardingStep || 'industry',
@@ -175,6 +182,7 @@ const getSupplierForRequest = async (req, options = {}) => {
 // @access  Public
 exports.getSuppliers = async (req, res) => {
   try {
+    await expireElapsedSubscriptions();
     let query;
     const andConditions = [];
     const keyword = typeof req.query.keyword === 'string' ? req.query.keyword.trim() : '';
@@ -322,6 +330,7 @@ exports.getSuppliers = async (req, res) => {
 // @access  Public
 exports.getSupplier = async (req, res) => {
   try {
+    await expireElapsedSubscriptions({ supplierId: req.params.id });
     let query = Supplier.findById(req.params.id)
       .populate({
         path: 'categories',
@@ -562,11 +571,13 @@ const Rfq = require('../rfqs/rfq.model');
 // @access  Private (Supplier only)
 exports.getSupplierDashboard = async (req, res) => {
   try {
-    const supplierProfile = await Supplier.findOne({ user: req.user.id });
+    let supplierProfile = await Supplier.findOne({ user: req.user.id });
     
     if (!supplierProfile) {
       return res.status(404).json({ success: false, message: 'Supplier profile not found' });
     }
+    await expireElapsedSubscriptions({ supplierId: supplierProfile._id });
+    supplierProfile = await Supplier.findById(supplierProfile._id);
 
     // Aggregate stats
     const totalRfqs = await Rfq.countDocuments({ supplier: supplierProfile._id });

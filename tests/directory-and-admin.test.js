@@ -254,6 +254,10 @@ describe('public directory and admin subscription visibility', () => {
       isApproved: false,
     });
 
+    const currentMonthPaymentDate = new Date();
+    currentMonthPaymentDate.setDate(12);
+    currentMonthPaymentDate.setHours(10, 0, 0, 0);
+
     await Payment.create({
       supplier: activeSupplier._id,
       plan: activePlan._id,
@@ -262,8 +266,8 @@ describe('public directory and admin subscription visibility', () => {
       listingPeriod: '12-months',
       amount: 320,
       status: 'paid',
-      createdAt: new Date('2026-08-12T10:00:00.000Z'),
-      updatedAt: new Date('2026-08-12T10:00:00.000Z'),
+      createdAt: currentMonthPaymentDate,
+      updatedAt: currentMonthPaymentDate,
     });
 
     await request(app).get('/api/v1/subscriptions/admin/overview').expect(401);

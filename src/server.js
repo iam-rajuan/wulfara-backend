@@ -5,6 +5,7 @@ const { logger } = require('./utils/logger');
 const { enforceProtectedSuperAdmins, syncAdminUserFromEnv } = require('./utils/adminSeed');
 const { assignFallbackAdminRoles, seedDefaultAdminRoles } = require('./modules/adminRoles/adminRole.service');
 const { buildSocketCorsOptions } = require('./utils/origins');
+const { startSubscriptionExpirationScheduler } = require('./modules/subscriptions/subscriptionEntitlement.service');
 
 const { Server } = require('socket.io');
 
@@ -17,6 +18,7 @@ const startServer = async () => {
     await assignFallbackAdminRoles();
     await syncAdminUserFromEnv();
     await enforceProtectedSuperAdmins();
+    startSubscriptionExpirationScheduler();
     app.set('trust proxy', 1);
 
     const server = app.listen(PORT, () => {

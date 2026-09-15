@@ -21,13 +21,67 @@ jest.mock('stripe', () => {
     id: 'cs_test_default',
     url: 'https://stripe.test/checkout/default',
   });
+  const retrieveSession = jest.fn().mockResolvedValue({
+    id: 'cs_test_default',
+    livemode: false,
+    status: 'complete',
+    payment_status: 'paid',
+    mode: 'subscription',
+    client_reference_id: '',
+    customer: 'cus_test_default',
+    subscription: 'sub_test_default',
+    metadata: {},
+  });
+  const retrieveInvoice = jest.fn();
   const constructEvent = jest.fn();
+  const createProduct = jest.fn().mockResolvedValue({
+    id: 'prod_test_default',
+  });
+  const createPrice = jest.fn().mockResolvedValue({
+    id: 'price_test_default',
+  });
+  const retrieveSubscription = jest.fn().mockResolvedValue({
+    id: 'sub_test_default',
+    status: 'incomplete',
+    customer: 'cus_test_default',
+    start_date: 1704067200,
+    current_period_start: 1704067200,
+    current_period_end: 1706745600,
+    cancel_at: null,
+    cancel_at_period_end: false,
+    metadata: {},
+  });
+  const updateSubscription = jest.fn(async (id, params) => ({
+    id,
+    status: 'incomplete',
+    customer: 'cus_test_default',
+    start_date: 1704067200,
+    current_period_start: 1704067200,
+    current_period_end: 1706745600,
+    cancel_at: params.cancel_at,
+    cancel_at_period_end: false,
+    metadata: params.metadata || {},
+  }));
 
   const factory = jest.fn(() => ({
     checkout: {
       sessions: {
         create: createSession,
+        retrieve: retrieveSession,
       },
+    },
+    invoices: {
+      retrieve: retrieveInvoice,
+    },
+    products: {
+      create: createProduct,
+    },
+    prices: {
+      create: createPrice,
+    },
+    subscriptions: {
+      retrieve: retrieveSubscription,
+      update: updateSubscription,
     },
     webhooks: {
       constructEvent,
@@ -35,8 +89,14 @@ jest.mock('stripe', () => {
   }));
 
   factory.__mock = {
+    createPrice,
+    createProduct,
     createSession,
+    retrieveSession,
+    retrieveInvoice,
     constructEvent,
+    retrieveSubscription,
+    updateSubscription,
   };
 
   return factory;
@@ -73,6 +133,51 @@ afterEach(async () => {
     id: 'cs_test_default',
     url: 'https://stripe.test/checkout/default',
   });
+  stripeFactory.__mock.retrieveSession.mockReset();
+  stripeFactory.__mock.retrieveSession.mockResolvedValue({
+    id: 'cs_test_default',
+    livemode: false,
+    status: 'complete',
+    payment_status: 'paid',
+    mode: 'subscription',
+    client_reference_id: '',
+    customer: 'cus_test_default',
+    subscription: 'sub_test_default',
+    metadata: {},
+  });
+  stripeFactory.__mock.retrieveInvoice.mockReset();
+  stripeFactory.__mock.createProduct.mockReset();
+  stripeFactory.__mock.createProduct.mockResolvedValue({
+    id: 'prod_test_default',
+  });
+  stripeFactory.__mock.createPrice.mockReset();
+  stripeFactory.__mock.createPrice.mockResolvedValue({
+    id: 'price_test_default',
+  });
+  stripeFactory.__mock.retrieveSubscription.mockReset();
+  stripeFactory.__mock.retrieveSubscription.mockResolvedValue({
+    id: 'sub_test_default',
+    status: 'incomplete',
+    customer: 'cus_test_default',
+    start_date: 1704067200,
+    current_period_start: 1704067200,
+    current_period_end: 1706745600,
+    cancel_at: null,
+    cancel_at_period_end: false,
+    metadata: {},
+  });
+  stripeFactory.__mock.updateSubscription.mockReset();
+  stripeFactory.__mock.updateSubscription.mockImplementation(async (id, params) => ({
+    id,
+    status: 'incomplete',
+    customer: 'cus_test_default',
+    start_date: 1704067200,
+    current_period_start: 1704067200,
+    current_period_end: 1706745600,
+    cancel_at: params.cancel_at,
+    cancel_at_period_end: false,
+    metadata: params.metadata || {},
+  }));
   stripeFactory.__mock.constructEvent.mockReset();
   jest.clearAllMocks();
 });

@@ -40,6 +40,58 @@ const listingPeriodSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const stripePriceCacheSchema = new mongoose.Schema(
+  {
+    billingCycleType: {
+      type: String,
+      enum: ['monthly'],
+      required: true,
+    },
+    currency: {
+      type: String,
+      default: 'usd',
+      lowercase: true,
+    },
+    unitAmount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    interval: {
+      type: String,
+      default: 'month',
+    },
+    intervalCount: {
+      type: Number,
+      default: 1,
+      min: 1,
+    },
+    durationMonths: {
+      type: Number,
+      default: null,
+    },
+    listingDiscountPercent: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 100,
+    },
+    stripePriceId: {
+      type: String,
+      required: true,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false }
+);
+
 const pricingPlanSchema = new mongoose.Schema({
   internalName: {
     type: String,
@@ -95,6 +147,27 @@ const pricingPlanSchema = new mongoose.Schema({
   autoRenewal: {
     type: Boolean,
     default: true
+  },
+  stripeProductId: {
+    type: String,
+    default: '',
+  },
+  stripeMonthlyPriceId: {
+    type: String,
+    default: '',
+  },
+  stripeMonthlyUnitAmount: {
+    type: Number,
+    default: 0,
+  },
+  stripeMonthlyCurrency: {
+    type: String,
+    default: 'usd',
+    lowercase: true,
+  },
+  stripePrices: {
+    type: [stripePriceCacheSchema],
+    default: [],
   },
   features: {
     type: [String],

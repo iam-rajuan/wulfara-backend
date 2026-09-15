@@ -11,6 +11,20 @@ const paymentSchema = new mongoose.Schema({
     unique: true,
     sparse: true
   },
+  stripeInvoiceId: {
+    type: String,
+    unique: true,
+    sparse: true
+  },
+  stripePaymentIntentId: {
+    type: String,
+    default: ''
+  },
+  stripeSubscriptionId: {
+    type: String,
+    default: '',
+    index: true
+  },
   plan: {
     type: mongoose.Schema.ObjectId,
     ref: 'PricingPlan',
@@ -54,9 +68,27 @@ const paymentSchema = new mongoose.Schema({
     type: Number,
     required: true
   },
+  paymentType: {
+    type: String,
+    enum: ['initial_subscription', 'recurring_invoice', 'annual', 'addon', 'legacy'],
+    default: 'legacy',
+  },
+  billingPeriodStart: {
+    type: Date,
+    default: null,
+  },
+  billingPeriodEnd: {
+    type: Date,
+    default: null,
+  },
+  currency: {
+    type: String,
+    default: 'usd',
+    lowercase: true,
+  },
   status: {
     type: String,
-    enum: ['paid', 'pending', 'failed'],
+    enum: ['paid', 'pending', 'failed', 'cancelled', 'requires_action'],
     default: 'paid'
   },
   invoiceUrl: {

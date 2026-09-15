@@ -967,6 +967,93 @@ describe('subscription and stripe flow', () => {
     expect(payments[0].paymentType).toBe('initial_subscription');
   });
 
+  it('reconciles the latest paid monthly checkout when the session id is no longer in the URL', async () => {
+    const { user, supplier } = await createCheckoutReadySupplier();
+    const monthlyPlan = await createPricingPlan({
+      name: 'No Session Recovery Plan',
+      slug: `no-session-recovery-${Date.now()}`,
+      price: 753,
+      billingCycle: 'Monthly',
+      listingPeriods: [{ durationMonths: 48, isActive: true }],
+    });
+
+    await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({ planId: monthlyPlan._id.toString() })
+      .expect(200);
+
+    const metadata = stripeFactory.__mock.createSession.mock.calls.at(-1)[0].metadata;
+    stripeFactory.__mock.retrieveSession.mockResolvedValue({
+      id: 'cs_test_default',
+      livemode: false,
+      status: 'complete',
+      payment_status: 'paid',
+      mode: 'subscription',
+      client_reference_id: supplier._id.toString(),
+      customer: 'cus_no_session_recovery',
+      metadata,
+      subscription: {
+        id: 'sub_no_session_recovery',
+        status: 'active',
+        customer: 'cus_no_session_recovery',
+        start_date: 1704067200,
+        current_period_start: 1704067200,
+        current_period_end: 1706745600,
+        cancel_at: null,
+        cancel_at_period_end: false,
+        latest_invoice: {
+          id: 'in_no_session_recovery',
+          status: 'paid',
+          paid: true,
+          amount_paid: 75300,
+          currency: 'usd',
+          subscription: 'sub_no_session_recovery',
+          payment_intent: 'pi_no_session_recovery',
+          hosted_invoice_url: 'https://stripe.test/invoices/in_no_session_recovery',
+          lines: {
+            data: [
+              {
+                period: {
+                  start: 1704067200,
+                  end: 1706745600,
+                },
+              },
+            ],
+          },
+        },
+        metadata,
+      },
+    });
+
+    await request(app)
+      .get('/api/v1/subscriptions/checkout-status')
+      .set(authHeader(tokenForUser(user)))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe('paid');
+        expect(body.paymentStatus).toBe('paid');
+        expect(body.subscriptionStatus).toBe('active');
+        expect(body.redirectTo).toBe('/dashboard');
+      });
+
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+    const subscriptionRecord = await Subscription.findOne({ supplier: supplier._id });
+
+    expect(stripeFactory.__mock.retrieveSession).toHaveBeenCalledWith(
+      'cs_test_default',
+      expect.objectContaining({
+        expand: ['subscription', 'subscription.latest_invoice', 'payment_intent'],
+      })
+    );
+    expect(refreshedSupplier.paymentStatus).toBe('paid');
+    expect(refreshedSupplier.subscriptionStatus).toBe('active');
+    expect(refreshedSupplier.listingStatus).toBe('Approved');
+    expect(subscriptionRecord.stripeSubscriptionId).toBe('sub_no_session_recovery');
+    expect(subscriptionRecord.status).toBe('active');
+    expect(await Payment.countDocuments({ stripeInvoiceId: 'in_no_session_recovery' })).toBe(1);
+  });
+
   it('returns confirmed local state without calling Stripe when webhook already activated the listing', async () => {
     const { user, supplier } = await createCheckoutReadySupplier();
     const monthlyPlan = await createPricingPlan({

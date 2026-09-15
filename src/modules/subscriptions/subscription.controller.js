@@ -1624,19 +1624,22 @@ const findSubscriptionForCheckoutSession = async (sessionId, session = {}) => {
   );
 };
 
+const findLatestCheckoutSubscriptionForSupplier = async (supplierProfile) => {
+  if (!supplierProfile?._id) {
+    return null;
+  }
+
+  return Subscription.findOne({
+    supplier: supplierProfile._id,
+    stripeCheckoutSessionId: { $type: 'string', $gt: '' },
+  }).sort({ createdAt: -1 });
+};
+
 // @desc    Verify/reconcile Stripe Checkout status after redirect
 // @route   GET /api/v1/subscriptions/checkout-status
 // @access  Private (Supplier/Admin)
 exports.getCheckoutStatus = async (req, res) => {
-  const sessionId = String(req.query.session_id || '').trim();
-
-  if (!/^cs_(test|live)_[A-Za-z0-9_]+$/.test(sessionId)) {
-    return res.status(400).json({
-      success: false,
-      status: 'invalid_session',
-      message: 'Invalid checkout session.',
-    });
-  }
+  let sessionId = String(req.query.session_id || '').trim();
 
   try {
     const supplierProfile = await getSupplierForCheckoutStatus(req);
@@ -1648,7 +1651,31 @@ exports.getCheckoutStatus = async (req, res) => {
       });
     }
 
-    let subscriptionRecord = await findSubscriptionForCheckoutSession(sessionId);
+    let subscriptionRecord = null;
+
+    if (!sessionId) {
+      subscriptionRecord = await findLatestCheckoutSubscriptionForSupplier(supplierProfile);
+      sessionId = String(subscriptionRecord?.stripeCheckoutSessionId || '').trim();
+
+      if (!sessionId) {
+        return res.status(200).json(buildCheckoutStatusPayload({
+          status: 'no_checkout',
+          supplierProfile,
+          subscriptionRecord,
+          message: 'No recent checkout session is available to verify.',
+        }));
+      }
+    }
+
+    if (!/^cs_(test|live)_[A-Za-z0-9_]+$/.test(sessionId)) {
+      return res.status(400).json({
+        success: false,
+        status: 'invalid_session',
+        message: 'Invalid checkout session.',
+      });
+    }
+
+    subscriptionRecord = subscriptionRecord || await findSubscriptionForCheckoutSession(sessionId);
 
     if (subscriptionRecord) {
       ensureSessionBelongsToSupplier({ session: { id: sessionId }, supplierProfile, subscriptionRecord });

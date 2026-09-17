@@ -72,10 +72,25 @@ const logStripeFlow = (scope, message, details = {}) => {
 
 const hasNoFurtherAutomaticPayments = (subscriptionRecord, periodEnd) =>
   Boolean(
-    subscriptionRecord?.cancelAt &&
+    subscriptionRecord?.cancelAtPeriodEnd ||
+      (subscriptionRecord?.cancelAt &&
       periodEnd &&
-      new Date(periodEnd).getTime() >= new Date(subscriptionRecord.cancelAt).getTime()
+      new Date(periodEnd).getTime() >= new Date(subscriptionRecord.cancelAt).getTime())
   );
+
+const CANCELLABLE_MONTHLY_STATUSES = [
+  'active',
+  'trialing',
+  'past_due',
+  'payment_failed',
+  'requires_action',
+];
+
+const sanitizeStripeCancellationError = (error) => {
+  const sanitized = new Error('Unable to schedule subscription cancellation right now. Please try again later.');
+  sanitized.statusCode = error?.statusCode || 502;
+  return sanitized;
+};
 
 const parseDurationMonths = (value) => {
   if (typeof value === 'number') {
@@ -413,7 +428,11 @@ const activateSupplierEntitlement = async ({
 const expireSupplierEntitlement = async (supplierProfile, subscriptionStatus = 'cancelled') => {
   supplierProfile.subscriptionStatus = subscriptionStatus;
   supplierProfile.paymentStatus = subscriptionStatus === 'cancelled' ? 'cancelled' : 'unpaid';
+  supplierProfile.isApproved = false;
   supplierProfile.listingStatus = 'Hidden';
+  if (supplierProfile.featuredHeroPlacement?.enabled) {
+    supplierProfile.featuredHeroPlacement.enabled = false;
+  }
   syncSupplierLifecycle(supplierProfile);
   await supplierProfile.save();
 };
@@ -502,12 +521,16 @@ const syncSubscriptionDatesFromStripe = (subscriptionRecord, stripeSubscription 
     dateFromUnix(stripeSubscription.current_period_start) || subscriptionRecord.currentPeriodStart;
   subscriptionRecord.currentPeriodEnd =
     dateFromUnix(stripeSubscription.current_period_end) || subscriptionRecord.currentPeriodEnd;
-  subscriptionRecord.cancelAt = dateFromUnix(stripeSubscription.cancel_at) || subscriptionRecord.cancelAt;
   const currentPeriodEnd = dateFromUnix(stripeSubscription.current_period_end);
+  const cancelAtPeriodEnd = Boolean(stripeSubscription.cancel_at_period_end);
+  const stripeCancelAt = dateFromUnix(stripeSubscription.cancel_at);
+  subscriptionRecord.cancelAtPeriodEnd = cancelAtPeriodEnd;
+  subscriptionRecord.cancelAt = cancelAtPeriodEnd
+    ? currentPeriodEnd || stripeCancelAt || subscriptionRecord.cancelAt
+    : stripeCancelAt || subscriptionRecord.cancelAt;
   subscriptionRecord.nextPaymentDate = hasNoFurtherAutomaticPayments(subscriptionRecord, currentPeriodEnd)
     ? null
     : currentPeriodEnd || subscriptionRecord.nextPaymentDate;
-  subscriptionRecord.cancelAtPeriodEnd = Boolean(stripeSubscription.cancel_at_period_end);
   subscriptionRecord.stripeSubscriptionScheduleId =
     getStripeObjectId(stripeSubscription.schedule) || subscriptionRecord.stripeSubscriptionScheduleId;
 };
@@ -884,6 +907,95 @@ exports.createCheckoutSession = async (req, res) => {
   }
 };
 
+// @desc    Schedule cancellation for the logged-in supplier's current monthly subscription
+// @route   POST /api/v1/subscriptions/current/cancel
+// @access  Private (Supplier only)
+exports.cancelCurrentSubscription = async (req, res) => {
+  try {
+    const supplierProfile = await Supplier.findOne({ user: req.user.id });
+    if (!supplierProfile) {
+      return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+    }
+
+    await expireElapsedSubscriptions({ supplierId: supplierProfile._id });
+
+    const subscriptionRecord = await findCurrentCancellableMonthlySubscription(supplierProfile);
+    if (!subscriptionRecord) {
+      const latestSubscription = await Subscription.findOne({ supplier: supplierProfile._id })
+        .sort({ createdAt: -1 });
+      const message = latestSubscription?.billingCycleType && latestSubscription.billingCycleType !== 'monthly'
+        ? 'Only active monthly recurring subscriptions can be canceled from this endpoint.'
+        : 'No active monthly subscription is available to cancel.';
+      return res.status(latestSubscription?.billingCycleType && latestSubscription.billingCycleType !== 'monthly' ? 400 : 404)
+        .json({ success: false, message });
+    }
+
+    if (!subscriptionRecord.stripeSubscriptionId) {
+      return res.status(409).json({
+        success: false,
+        message: 'This subscription is missing its Stripe subscription reference.',
+      });
+    }
+
+    if (
+      supplierProfile.stripeCustomerId &&
+      subscriptionRecord.stripeCustomerId &&
+      supplierProfile.stripeCustomerId !== subscriptionRecord.stripeCustomerId
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: 'Subscription ownership could not be verified.',
+      });
+    }
+
+    if (subscriptionRecord.cancelAtPeriodEnd) {
+      subscriptionRecord.nextPaymentDate = null;
+      await subscriptionRecord.save();
+      return res.status(200).json(buildCancellationPayload({
+        supplierProfile,
+        subscriptionRecord,
+        message: 'Subscription cancellation is already scheduled.',
+      }));
+    }
+
+    const originalTermEnd = subscriptionRecord.cancelAt || subscriptionRecord.subscriptionEndDate;
+    const updatedStripeSubscription = await scheduleStripeCancellationAtPeriodEnd({
+      subscriptionRecord,
+      supplierProfile,
+    });
+
+    assertStripeSubscriptionOwnership({
+      stripeSubscription: updatedStripeSubscription,
+      supplierProfile,
+      subscriptionRecord,
+    });
+
+    syncSubscriptionDatesFromStripe(subscriptionRecord, updatedStripeSubscription);
+    const currentPaidPeriodEnd =
+      dateFromUnix(updatedStripeSubscription?.current_period_end) ||
+      subscriptionRecord.currentPeriodEnd;
+    const effectiveCancelAt = getEarliestDate(currentPaidPeriodEnd, originalTermEnd, subscriptionRecord.cancelAt);
+
+    subscriptionRecord.cancelAtPeriodEnd = true;
+    subscriptionRecord.cancelAt = effectiveCancelAt || subscriptionRecord.cancelAt;
+    subscriptionRecord.subscriptionEndDate = effectiveCancelAt || subscriptionRecord.subscriptionEndDate;
+    subscriptionRecord.nextPaymentDate = null;
+    subscriptionRecord.status = subscriptionRecord.status === 'active' ? 'active' : subscriptionRecord.status;
+    subscriptionRecord.stripeSubscriptionStatus =
+      updatedStripeSubscription?.status || subscriptionRecord.stripeSubscriptionStatus;
+
+    await subscriptionRecord.save();
+
+    return res.status(200).json(buildCancellationPayload({
+      supplierProfile,
+      subscriptionRecord,
+      message: 'Subscription cancellation scheduled. Access remains active until the end of the current paid billing period.',
+    }));
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, message: error.message });
+  }
+};
+
 const updateSubscriptionCancelAt = async (subscriptionRecord, stripeSubscription, fallbackDate = new Date()) => {
   if (!subscriptionRecord?.durationMonths || !subscriptionRecord.stripeSubscriptionId) {
     return;
@@ -907,6 +1019,150 @@ const updateSubscriptionCancelAt = async (subscriptionRecord, stripeSubscription
       },
     });
     syncSubscriptionDatesFromStripe(subscriptionRecord, updatedSubscription);
+  }
+};
+
+const getEarliestDate = (...values) => {
+  const dates = values
+    .map((value) => (value ? new Date(value) : null))
+    .filter((value) => value && !Number.isNaN(value.getTime()))
+    .sort((left, right) => left.getTime() - right.getTime());
+
+  return dates[0] || null;
+};
+
+const assertStripeSubscriptionOwnership = ({ stripeSubscription, supplierProfile, subscriptionRecord }) => {
+  const stripeCustomerId = getStripeObjectId(stripeSubscription?.customer);
+  const supplierStripeCustomerId = supplierProfile.stripeCustomerId || '';
+  const localStripeCustomerId = subscriptionRecord.stripeCustomerId || '';
+
+  if (
+    stripeCustomerId &&
+    ((supplierStripeCustomerId && supplierStripeCustomerId !== stripeCustomerId) ||
+      (localStripeCustomerId && localStripeCustomerId !== stripeCustomerId))
+  ) {
+    const error = new Error('Subscription ownership could not be verified.');
+    error.statusCode = 403;
+    throw error;
+  }
+};
+
+const isSubscriptionMonthlyRecurring = (subscription = {}) => {
+  const subscriptionObject = subscription?.toObject ? subscription.toObject() : subscription;
+  return (
+    subscriptionObject.billingCycleType === 'monthly' ||
+    isMonthlyBillingCycle(subscriptionObject.billingCycle || subscriptionObject.plan?.billingCycle)
+  );
+};
+
+const findCurrentCancellableMonthlySubscription = async (supplierProfile) => {
+  const candidates = await Subscription.find({
+    supplier: supplierProfile._id,
+    status: { $in: CANCELLABLE_MONTHLY_STATUSES },
+  })
+    .populate({ path: 'plan', select: 'name slug price billingCycle isActive' })
+    .sort({ createdAt: -1 });
+
+  return candidates.find(isSubscriptionMonthlyRecurring) || null;
+};
+
+const buildCancellationPayload = ({ supplierProfile, subscriptionRecord, message }) => ({
+  success: true,
+  message,
+  status: 'cancellation_scheduled',
+  subscriptionStatus: supplierProfile.subscriptionStatus,
+  paymentStatus: supplierProfile.paymentStatus,
+  listingStatus: supplierProfile.listingStatus,
+  data: serializeBillingSubscription(subscriptionRecord),
+});
+
+const serializeBillingSubscription = (subscription) => {
+  if (!subscription) {
+    return null;
+  }
+
+  const subscriptionObject = subscription?.toObject ? subscription.toObject() : subscription;
+  const isMonthlyRecurring = isSubscriptionMonthlyRecurring(subscriptionObject);
+  const cancellationScheduled =
+    isMonthlyRecurring && Boolean(subscriptionObject.cancelAtPeriodEnd);
+  const accessUntil =
+    subscriptionObject.currentPeriodEnd ||
+    subscriptionObject.cancelAt ||
+    subscriptionObject.subscriptionEndDate ||
+    null;
+
+  return {
+    ...subscriptionObject,
+    stripeStatus: subscriptionObject.stripeSubscriptionStatus || subscriptionObject.status || '',
+    recurringAmount: subscriptionObject.effectiveRecurringAmount || 0,
+    isMonthlyRecurring,
+    cancellationScheduled,
+    accessUntil,
+    canCancelAtPeriodEnd:
+      isMonthlyRecurring &&
+      CANCELLABLE_MONTHLY_STATUSES.includes(subscriptionObject.status) &&
+      !cancellationScheduled,
+  };
+};
+
+const scheduleStripeCancellationAtPeriodEnd = async ({ subscriptionRecord, supplierProfile }) => {
+  if (!stripe?.subscriptions?.update) {
+    const error = new Error('Stripe subscription cancellation is not available.');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  let stripeSubscription = null;
+  try {
+    stripeSubscription = stripe?.subscriptions?.retrieve
+      ? await stripe.subscriptions.retrieve(subscriptionRecord.stripeSubscriptionId)
+      : null;
+  } catch (error) {
+    throw sanitizeStripeCancellationError(error);
+  }
+
+  if (stripeSubscription?.livemode) {
+    const error = new Error('Live Stripe subscriptions are not accepted in this environment.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (stripeSubscription) {
+    assertStripeSubscriptionOwnership({ stripeSubscription, supplierProfile, subscriptionRecord });
+  }
+
+  const stripeCurrentPeriodEnd = dateFromUnix(stripeSubscription?.current_period_end);
+  const localCurrentPeriodEnd = subscriptionRecord.currentPeriodEnd;
+  const currentPaidPeriodEnd = stripeCurrentPeriodEnd || localCurrentPeriodEnd;
+
+  if (!currentPaidPeriodEnd) {
+    const error = new Error('Current billing period end is not available for this subscription.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  const updateParams = {
+    cancel_at_period_end: true,
+    metadata: {
+      ...(stripeSubscription?.metadata || {}),
+      ...(subscriptionRecord.metadata ? Object.fromEntries(subscriptionRecord.metadata) : {}),
+      wulfaraSubscriptionId: subscriptionRecord._id.toString(),
+      cancellationRequested: 'true',
+      environment: STRIPE_ENVIRONMENT,
+      source: STRIPE_SOURCE,
+    },
+  };
+
+  try {
+    return await stripe.subscriptions.update(subscriptionRecord.stripeSubscriptionId, updateParams);
+  } catch (error) {
+    if (/cancel_at/i.test(error?.message || '')) {
+      return stripe.subscriptions.update(subscriptionRecord.stripeSubscriptionId, {
+        ...updateParams,
+        cancel_at: '',
+      });
+    }
+    throw sanitizeStripeCancellationError(error);
   }
 };
 
@@ -1398,16 +1654,37 @@ const handleStripeSubscriptionEvent = async (stripeSubscription) => {
     return { ignored: true, reason: 'subscription_not_found' };
   }
 
+  const wasCancellationScheduled = Boolean(subscriptionRecord.cancelAtPeriodEnd);
   subscriptionRecord.stripeSubscriptionId = stripeSubscriptionId || subscriptionRecord.stripeSubscriptionId;
   subscriptionRecord.stripeCustomerId = getStripeObjectId(stripeSubscription.customer) || subscriptionRecord.stripeCustomerId;
   subscriptionRecord.status = stripeSubscription.status || subscriptionRecord.status;
   syncSubscriptionDatesFromStripe(subscriptionRecord, stripeSubscription);
 
   if (TERMINAL_STRIPE_SUBSCRIPTION_STATUSES.includes(stripeSubscription.status)) {
+    const customerCancellationCompleted =
+      wasCancellationScheduled || Boolean(stripeSubscription.cancel_at_period_end);
     const terminalDate = subscriptionRecord.cancelAt || subscriptionRecord.subscriptionEndDate;
+    const terminalTime = terminalDate ? new Date(terminalDate).getTime() : Number.NaN;
+    const hasFutureCustomerCancellationAccess =
+      customerCancellationCompleted &&
+      !Number.isNaN(terminalTime) &&
+      terminalTime > Date.now();
+
+    if (hasFutureCustomerCancellationAccess) {
+      subscriptionRecord.status = 'active';
+      subscriptionRecord.stripeSubscriptionStatus = stripeSubscription.status || subscriptionRecord.stripeSubscriptionStatus;
+      subscriptionRecord.cancelAtPeriodEnd = true;
+      subscriptionRecord.nextPaymentDate = null;
+      subscriptionRecord.currentPeriodEnd = subscriptionRecord.currentPeriodEnd || terminalDate;
+      subscriptionRecord.subscriptionEndDate = terminalDate;
+      subscriptionRecord.cancelAt = terminalDate;
+      await subscriptionRecord.save();
+      return { statusUpdated: true, entitlementPreservedUntil: terminalDate };
+    }
+
     const endedAfterAgreedTerm = terminalDate && terminalDate <= new Date();
     subscriptionRecord.status =
-      stripeSubscription.status === 'canceled' && endedAfterAgreedTerm
+      stripeSubscription.status === 'canceled' && endedAfterAgreedTerm && !customerCancellationCompleted
         ? 'completed'
         : stripeSubscription.status;
     subscriptionRecord.nextPaymentDate = null;
@@ -1943,7 +2220,7 @@ exports.getInvoices = async (req, res) => {
       success: true,
       count: payments.length,
       data: payments,
-      currentSubscription,
+      currentSubscription: serializeBillingSubscription(currentSubscription),
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -1967,7 +2244,7 @@ exports.getCurrentSubscription = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      data: currentSubscription,
+      data: serializeBillingSubscription(currentSubscription),
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

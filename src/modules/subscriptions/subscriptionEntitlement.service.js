@@ -21,13 +21,21 @@ const expireSupplierForEndedSubscription = async (subscription) => {
     return;
   }
 
-  subscription.status = subscription.billingCycleType === 'annual' ? 'expired' : 'completed';
+  subscription.status = subscription.billingCycleType === 'annual'
+    ? 'expired'
+    : subscription.cancelAtPeriodEnd
+      ? 'canceled'
+      : 'completed';
   subscription.nextPaymentDate = null;
   await subscription.save();
 
-  supplier.subscriptionStatus = 'inactive';
-  supplier.paymentStatus = 'unpaid';
+  supplier.subscriptionStatus = subscription.status === 'canceled' ? 'cancelled' : 'inactive';
+  supplier.paymentStatus = subscription.status === 'canceled' ? 'cancelled' : 'unpaid';
+  supplier.isApproved = false;
   supplier.listingStatus = 'Hidden';
+  if (supplier.featuredHeroPlacement?.enabled) {
+    supplier.featuredHeroPlacement.enabled = false;
+  }
   syncSupplierLifecycle(supplier);
   await supplier.save();
 };

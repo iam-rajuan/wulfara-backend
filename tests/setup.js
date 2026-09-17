@@ -58,8 +58,8 @@ jest.mock('stripe', () => {
     start_date: 1704067200,
     current_period_start: 1704067200,
     current_period_end: 1706745600,
-    cancel_at: params.cancel_at,
-    cancel_at_period_end: false,
+    cancel_at: params.cancel_at_period_end ? 1706745600 : params.cancel_at,
+    cancel_at_period_end: Boolean(params.cancel_at_period_end),
     metadata: params.metadata || {},
   }));
 
@@ -174,8 +174,8 @@ afterEach(async () => {
     start_date: 1704067200,
     current_period_start: 1704067200,
     current_period_end: 1706745600,
-    cancel_at: params.cancel_at,
-    cancel_at_period_end: false,
+    cancel_at: params.cancel_at_period_end ? 1706745600 : params.cancel_at,
+    cancel_at_period_end: Boolean(params.cancel_at_period_end),
     metadata: params.metadata || {},
   }));
   stripeFactory.__mock.constructEvent.mockReset();

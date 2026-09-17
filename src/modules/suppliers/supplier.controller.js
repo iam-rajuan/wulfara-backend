@@ -817,6 +817,8 @@ exports.getOnboardingStatus = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Supplier profile not found' });
     }
 
+    await expireElapsedSubscriptions({ supplierId: supplier._id });
+
     let query = Supplier.findById(supplier._id)
       .populate('selectedPlan')
       .populate({ path: 'categories', select: 'name slug parentCategory status' });

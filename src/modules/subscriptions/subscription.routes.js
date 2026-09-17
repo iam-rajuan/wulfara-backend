@@ -1,6 +1,7 @@
 const express = require('express');
 const {
   createCheckoutSession,
+  cancelCurrentSubscription,
   getCheckoutStatus,
   getCurrentSubscription,
   getInvoices,
@@ -20,6 +21,7 @@ const router = express.Router();
 const { protect, authorize, authorizeAdminPermissions, authorizePermissions } = require('../../middlewares/auth');
 
 router.post('/checkout-session', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('subscriptions.manage'), createCheckoutSession);
+router.post('/current/cancel', protect, authorize('supplier'), cancelCurrentSubscription);
 router.get('/checkout-status', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('subscriptions.read'), getCheckoutStatus);
 router.get('/current', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('subscriptions.read'), getCurrentSubscription);
 router.get('/invoices', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('subscriptions.read'), getInvoices);

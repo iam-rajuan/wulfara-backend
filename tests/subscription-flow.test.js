@@ -35,6 +35,86 @@ describe('subscription and stripe flow', () => {
     return { category, plan, supplier, user };
   };
 
+  const createActiveMonthlySubscription = async ({
+    user,
+    supplier,
+    plan,
+    stripeSubscriptionId = `sub_active_${Date.now()}`,
+    stripeCustomerId = `cus_active_${Date.now()}`,
+    currentPeriodStart = new Date('2024-05-01T00:00:00.000Z'),
+    currentPeriodEnd = new Date('2024-06-01T00:00:00.000Z'),
+    subscriptionEndDate = new Date('2027-07-01T00:00:00.000Z'),
+    amount = 499,
+  } = {}) => {
+    const context = supplier && user ? { supplier, user } : await createCheckoutReadySupplier();
+    const resolvedSupplier = supplier || context.supplier;
+    const resolvedUser = user || context.user;
+    const resolvedPlan = plan || await createPricingPlan({
+      name: 'Active Monthly Plan',
+      slug: `active-monthly-${Date.now()}`,
+      price: amount,
+      billingCycle: 'Monthly',
+      listingPeriods: [{ durationMonths: 38, isActive: true }],
+    });
+
+    resolvedSupplier.subscriptionStatus = 'active';
+    resolvedSupplier.paymentStatus = 'paid';
+    resolvedSupplier.isApproved = true;
+    resolvedSupplier.listingStatus = 'Approved';
+    resolvedSupplier.selectedPlan = resolvedPlan._id;
+    resolvedSupplier.selectedBillingCycle = 'Monthly';
+    resolvedSupplier.selectedListingPeriod = '38 Months';
+    resolvedSupplier.subscriptionPlan = 'premium';
+    resolvedSupplier.stripeCustomerId = stripeCustomerId;
+    await resolvedSupplier.save();
+
+    const subscription = await Subscription.create({
+      supplier: resolvedSupplier._id,
+      plan: resolvedPlan._id,
+      planName: resolvedPlan.name,
+      billingCycle: 'Monthly',
+      billingCycleType: 'monthly',
+      durationMonths: 38,
+      listingPeriod: '38 Months',
+      status: 'active',
+      stripeCustomerId,
+      stripeSubscriptionId,
+      stripeSubscriptionStatus: 'active',
+      subscriptionStartDate: new Date('2024-01-01T00:00:00.000Z'),
+      currentPeriodStart,
+      currentPeriodEnd,
+      nextPaymentDate: currentPeriodEnd,
+      subscriptionEndDate,
+      cancelAt: subscriptionEndDate,
+      effectiveRecurringAmount: amount,
+      totalInitialAmount: amount,
+    });
+
+    await Payment.create({
+      supplier: resolvedSupplier._id,
+      plan: resolvedPlan._id,
+      amount,
+      status: 'paid',
+      paymentType: 'recurring_invoice',
+      billingPeriodStart: currentPeriodStart,
+      billingPeriodEnd: currentPeriodEnd,
+      stripeInvoiceId: `in_paid_${Date.now()}_${Math.random()}`,
+      stripeSubscriptionId,
+    });
+
+    return {
+      user: resolvedUser,
+      supplier: resolvedSupplier,
+      plan: resolvedPlan,
+      subscription,
+      stripeSubscriptionId,
+      stripeCustomerId,
+      currentPeriodStart,
+      currentPeriodEnd,
+      subscriptionEndDate,
+    };
+  };
+
   it('creates Stripe checkout sessions with production-safe dashboard URLs', async () => {
     const { plan, user, supplier } = await createCheckoutReadySupplier();
 
@@ -656,6 +736,419 @@ describe('subscription and stripe flow', () => {
     expect(subscriptionRecord.effectiveRecurringAmount).toBe(424.15);
     expect(subscriptionRecord.addonAmount).toBe(15);
     expect(pendingPayments).toHaveLength(0);
+  });
+
+  it('allows an active monthly supplier to schedule cancellation at current period end without removing entitlement', async () => {
+    const currentPeriodEnd = new Date('2024-06-01T00:00:00.000Z');
+    const {
+      user,
+      supplier,
+      subscription,
+      stripeSubscriptionId,
+      stripeCustomerId,
+    } = await createActiveMonthlySubscription({ currentPeriodEnd });
+
+    stripeFactory.__mock.retrieveSubscription.mockResolvedValueOnce({
+      id: stripeSubscriptionId,
+      status: 'active',
+      livemode: false,
+      customer: stripeCustomerId,
+      current_period_start: 1714521600,
+      current_period_end: 1717200000,
+      cancel_at: 1814400000,
+      cancel_at_period_end: false,
+      metadata: {},
+    });
+    stripeFactory.__mock.updateSubscription.mockResolvedValueOnce({
+      id: stripeSubscriptionId,
+      status: 'active',
+      customer: stripeCustomerId,
+      current_period_start: 1714521600,
+      current_period_end: 1717200000,
+      cancel_at: 1717200000,
+      cancel_at_period_end: true,
+      metadata: {},
+    });
+
+    await request(app)
+      .post('/api/v1/subscriptions/current/cancel')
+      .set(authHeader(tokenForUser(user)))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.status).toBe('cancellation_scheduled');
+        expect(body.data.cancelAtPeriodEnd).toBe(true);
+        expect(body.data.nextPaymentDate).toBeNull();
+      });
+
+    expect(stripeFactory.__mock.updateSubscription).toHaveBeenCalledWith(
+      stripeSubscriptionId,
+      expect.objectContaining({ cancel_at_period_end: true })
+    );
+
+    const refreshedSubscription = await Subscription.findById(subscription._id);
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+    expect(refreshedSubscription.cancelAtPeriodEnd).toBe(true);
+    expect(refreshedSubscription.nextPaymentDate).toBeNull();
+    expect(refreshedSubscription.cancelAt.toISOString()).toBe(currentPeriodEnd.toISOString());
+    expect(refreshedSubscription.subscriptionEndDate.toISOString()).toBe(currentPeriodEnd.toISOString());
+    expect(refreshedSupplier.subscriptionStatus).toBe('active');
+    expect(refreshedSupplier.paymentStatus).toBe('paid');
+    expect(refreshedSupplier.listingStatus).toBe('Approved');
+  });
+
+  it('normalizes current subscription billing metadata for monthly cancellation UI eligibility', async () => {
+    const { user, subscription } = await createActiveMonthlySubscription({
+      stripeSubscriptionId: 'sub_current_shape',
+      stripeCustomerId: 'cus_current_shape',
+    });
+    subscription.billingCycleType = 'one_time';
+    subscription.billingCycle = 'Monthly';
+    await subscription.save();
+
+    await request(app)
+      .get('/api/v1/subscriptions/current')
+      .set(authHeader(tokenForUser(user)))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.billingCycle).toBe('Monthly');
+        expect(body.data.billingCycleType).toBe('one_time');
+        expect(body.data.isMonthlyRecurring).toBe(true);
+        expect(body.data.canCancelAtPeriodEnd).toBe(true);
+        expect(body.data.cancellationScheduled).toBe(false);
+        expect(body.data.recurringAmount).toBe(499);
+        expect(body.data.stripeSubscriptionId).toBe('sub_current_shape');
+      });
+  });
+
+  it('cancels an active monthly subscription even when billingCycleType is stale', async () => {
+    const { user, subscription, stripeSubscriptionId, stripeCustomerId } = await createActiveMonthlySubscription({
+      stripeSubscriptionId: 'sub_stale_type_cancel',
+      stripeCustomerId: 'cus_stale_type_cancel',
+    });
+    subscription.billingCycleType = 'one_time';
+    subscription.billingCycle = 'Monthly';
+    await subscription.save();
+
+    stripeFactory.__mock.retrieveSubscription.mockResolvedValueOnce({
+      id: stripeSubscriptionId,
+      status: 'active',
+      livemode: false,
+      customer: stripeCustomerId,
+      current_period_start: 1714521600,
+      current_period_end: 1717200000,
+      cancel_at: 1814400000,
+      cancel_at_period_end: false,
+      metadata: {},
+    });
+    stripeFactory.__mock.updateSubscription.mockResolvedValueOnce({
+      id: stripeSubscriptionId,
+      status: 'active',
+      customer: stripeCustomerId,
+      current_period_start: 1714521600,
+      current_period_end: 1717200000,
+      cancel_at: 1717200000,
+      cancel_at_period_end: true,
+      metadata: {},
+    });
+
+    await request(app)
+      .post('/api/v1/subscriptions/current/cancel')
+      .set(authHeader(tokenForUser(user)))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.cancelAtPeriodEnd).toBe(true);
+        expect(body.data.nextPaymentDate).toBeNull();
+      });
+
+    expect(stripeFactory.__mock.updateSubscription).toHaveBeenCalledWith(
+      stripeSubscriptionId,
+      expect.objectContaining({ cancel_at_period_end: true })
+    );
+  });
+
+  it('rejects annual subscriptions from the monthly cancellation endpoint', async () => {
+    const { user, supplier } = await createCheckoutReadySupplier();
+    const annualPlan = await createPricingPlan({
+      name: 'Annual Cancel Guard',
+      slug: `annual-cancel-guard-${Date.now()}`,
+      billingCycle: 'Annual',
+    });
+
+    await Subscription.create({
+      supplier: supplier._id,
+      plan: annualPlan._id,
+      planName: annualPlan.name,
+      billingCycle: 'Annual',
+      billingCycleType: 'annual',
+      status: 'active',
+      subscriptionEndDate: new Date('2025-01-01T00:00:00.000Z'),
+    });
+
+    await request(app)
+      .post('/api/v1/subscriptions/current/cancel')
+      .set(authHeader(tokenForUser(user)))
+      .expect(400);
+
+    expect(stripeFactory.__mock.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it('requires authentication for monthly cancellation', async () => {
+    await request(app)
+      .post('/api/v1/subscriptions/current/cancel')
+      .expect(401);
+  });
+
+  it('does not let a supplier cancel another supplier subscription id from the request body', async () => {
+    const { subscription: victimSubscription } = await createActiveMonthlySubscription({
+      stripeSubscriptionId: 'sub_victim_cancel',
+      stripeCustomerId: 'cus_victim_cancel',
+    });
+    const attackerUser = await createUser({
+      role: 'supplier',
+      email: uniqueEmail('cancel-attacker'),
+    });
+    await createSupplierForUser(attackerUser);
+
+    await request(app)
+      .post('/api/v1/subscriptions/current/cancel')
+      .set(authHeader(tokenForUser(attackerUser)))
+      .send({ stripeSubscriptionId: victimSubscription.stripeSubscriptionId })
+      .expect(404);
+
+    expect(stripeFactory.__mock.updateSubscription).not.toHaveBeenCalled();
+    const unchangedVictim = await Subscription.findById(victimSubscription._id);
+    expect(unchangedVictim.cancelAtPeriodEnd).toBe(false);
+  });
+
+  it('keeps duplicate cancellation requests idempotent', async () => {
+    const currentPeriodStart = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const currentPeriodEnd = new Date(Date.now() + 31 * 24 * 60 * 60 * 1000);
+    const currentPeriodStartUnix = Math.floor(currentPeriodStart.getTime() / 1000);
+    const currentPeriodEndUnix = Math.floor(currentPeriodEnd.getTime() / 1000);
+    const {
+      user,
+      subscription,
+      stripeSubscriptionId,
+      stripeCustomerId,
+    } = await createActiveMonthlySubscription({ currentPeriodStart, currentPeriodEnd });
+
+    stripeFactory.__mock.retrieveSubscription.mockResolvedValue({
+      id: stripeSubscriptionId,
+      status: 'active',
+      livemode: false,
+      customer: stripeCustomerId,
+      current_period_start: currentPeriodStartUnix,
+      current_period_end: currentPeriodEndUnix,
+      cancel_at: 1814400000,
+      cancel_at_period_end: false,
+      metadata: {},
+    });
+    stripeFactory.__mock.updateSubscription.mockResolvedValue({
+      id: stripeSubscriptionId,
+      status: 'active',
+      customer: stripeCustomerId,
+      current_period_start: currentPeriodStartUnix,
+      current_period_end: currentPeriodEndUnix,
+      cancel_at: currentPeriodEndUnix,
+      cancel_at_period_end: true,
+      metadata: {},
+    });
+
+    const token = tokenForUser(user);
+    await request(app)
+      .post('/api/v1/subscriptions/current/cancel')
+      .set(authHeader(token))
+      .expect(200);
+    await request(app)
+      .post('/api/v1/subscriptions/current/cancel')
+      .set(authHeader(token))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.message).toContain('already scheduled');
+      });
+
+    expect(stripeFactory.__mock.updateSubscription).toHaveBeenCalledTimes(1);
+    const refreshedSubscription = await Subscription.findById(subscription._id);
+    expect(refreshedSubscription.cancelAtPeriodEnd).toBe(true);
+    expect(refreshedSubscription.nextPaymentDate).toBeNull();
+  });
+
+  it('does not mutate local state when Stripe cancellation scheduling fails', async () => {
+    const { user, subscription, stripeSubscriptionId, stripeCustomerId } = await createActiveMonthlySubscription();
+
+    stripeFactory.__mock.retrieveSubscription.mockResolvedValueOnce({
+      id: stripeSubscriptionId,
+      status: 'active',
+      livemode: false,
+      customer: stripeCustomerId,
+      current_period_start: 1714521600,
+      current_period_end: 1717200000,
+      cancel_at: 1814400000,
+      cancel_at_period_end: false,
+      metadata: {},
+    });
+    stripeFactory.__mock.updateSubscription.mockRejectedValueOnce(new Error('Stripe temporary failure'));
+
+    await request(app)
+      .post('/api/v1/subscriptions/current/cancel')
+      .set(authHeader(tokenForUser(user)))
+      .expect(502);
+
+    const refreshedSubscription = await Subscription.findById(subscription._id);
+    expect(refreshedSubscription.cancelAtPeriodEnd).toBe(false);
+    expect(refreshedSubscription.nextPaymentDate.toISOString()).toBe(subscription.currentPeriodEnd.toISOString());
+    expect(refreshedSubscription.status).toBe('active');
+  });
+
+  it('syncs customer.subscription.updated cancellation scheduling without hiding listing entitlement', async () => {
+    const { supplier, subscription, stripeSubscriptionId, stripeCustomerId } = await createActiveMonthlySubscription();
+
+    await request(app)
+      .post('/api/v1/subscriptions/webhook')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({
+        type: 'customer.subscription.updated',
+        livemode: false,
+        data: {
+          object: {
+            id: stripeSubscriptionId,
+            status: 'active',
+            customer: stripeCustomerId,
+            current_period_start: 1714521600,
+            current_period_end: 1717200000,
+            cancel_at: 1717200000,
+            cancel_at_period_end: true,
+            metadata: { supplierId: supplier._id.toString() },
+          },
+        },
+      }))
+      .expect(200);
+
+    const refreshedSubscription = await Subscription.findById(subscription._id);
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+    expect(refreshedSubscription.status).toBe('active');
+    expect(refreshedSubscription.cancelAtPeriodEnd).toBe(true);
+    expect(refreshedSubscription.nextPaymentDate).toBeNull();
+    expect(refreshedSupplier.subscriptionStatus).toBe('active');
+    expect(refreshedSupplier.paymentStatus).toBe('paid');
+    expect(refreshedSupplier.listingStatus).toBe('Approved');
+  });
+
+  it('terminates entitlement on customer.subscription.deleted after a scheduled customer cancellation', async () => {
+    const { supplier, subscription, stripeSubscriptionId, stripeCustomerId } = await createActiveMonthlySubscription();
+    subscription.cancelAtPeriodEnd = true;
+    subscription.cancelAt = subscription.currentPeriodEnd;
+    subscription.subscriptionEndDate = subscription.currentPeriodEnd;
+    subscription.nextPaymentDate = null;
+    await subscription.save();
+    supplier.featuredHeroPlacement = { enabled: true, activatedAt: new Date('2024-01-01T00:00:00.000Z') };
+    await supplier.save();
+
+    await request(app)
+      .post('/api/v1/subscriptions/webhook')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({
+        type: 'customer.subscription.deleted',
+        livemode: false,
+        data: {
+          object: {
+            id: stripeSubscriptionId,
+            status: 'canceled',
+            customer: stripeCustomerId,
+            current_period_end: Math.floor(subscription.currentPeriodEnd.getTime() / 1000),
+            cancel_at: Math.floor(subscription.currentPeriodEnd.getTime() / 1000),
+            cancel_at_period_end: false,
+            metadata: { supplierId: supplier._id.toString() },
+          },
+        },
+      }))
+      .expect(200);
+
+    const refreshedSubscription = await Subscription.findById(subscription._id);
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+    expect(refreshedSubscription.status).toBe('canceled');
+    expect(refreshedSubscription.nextPaymentDate).toBeNull();
+    expect(refreshedSupplier.subscriptionStatus).toBe('cancelled');
+    expect(refreshedSupplier.paymentStatus).toBe('cancelled');
+    expect(refreshedSupplier.isApproved).toBe(false);
+    expect(refreshedSupplier.listingStatus).toBe('Hidden');
+    expect(refreshedSupplier.featuredHeroPlacement.enabled).toBe(false);
+    expect(await Payment.countDocuments({ supplier: supplier._id })).toBe(1);
+  });
+
+  it('preserves entitlement if Stripe sends terminal cancellation before the paid period ends', async () => {
+    const futurePeriodEnd = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const { supplier, subscription, stripeSubscriptionId, stripeCustomerId } = await createActiveMonthlySubscription({
+      currentPeriodEnd: futurePeriodEnd,
+      subscriptionEndDate: futurePeriodEnd,
+    });
+    subscription.cancelAtPeriodEnd = true;
+    subscription.cancelAt = futurePeriodEnd;
+    subscription.subscriptionEndDate = futurePeriodEnd;
+    subscription.nextPaymentDate = null;
+    await subscription.save();
+
+    await request(app)
+      .post('/api/v1/subscriptions/webhook')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({
+        type: 'customer.subscription.deleted',
+        livemode: false,
+        data: {
+          object: {
+            id: stripeSubscriptionId,
+            status: 'canceled',
+            customer: stripeCustomerId,
+            current_period_end: Math.floor(futurePeriodEnd.getTime() / 1000),
+            cancel_at: Math.floor(futurePeriodEnd.getTime() / 1000),
+            cancel_at_period_end: false,
+            metadata: { supplierId: supplier._id.toString() },
+          },
+        },
+      }))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.entitlementPreservedUntil).toBeTruthy();
+      });
+
+    const refreshedSubscription = await Subscription.findById(subscription._id);
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+    expect(refreshedSubscription.status).toBe('active');
+    expect(refreshedSubscription.stripeSubscriptionStatus).toBe('canceled');
+    expect(refreshedSubscription.cancelAtPeriodEnd).toBe(true);
+    expect(refreshedSubscription.nextPaymentDate).toBeNull();
+    expect(refreshedSupplier.subscriptionStatus).toBe('active');
+    expect(refreshedSupplier.paymentStatus).toBe('paid');
+    expect(refreshedSupplier.isApproved).toBe(true);
+    expect(refreshedSupplier.listingStatus).toBe('Approved');
+  });
+
+  it('blocks repurchase while cancellation is scheduled and allows it after terminal cancellation', async () => {
+    const { user, supplier, subscription, plan } = await createActiveMonthlySubscription();
+    subscription.cancelAtPeriodEnd = true;
+    subscription.nextPaymentDate = null;
+    await subscription.save();
+
+    await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({ planId: plan._id.toString() })
+      .expect(409);
+
+    subscription.status = 'canceled';
+    subscription.cancelAt = new Date(Date.now() - 60 * 1000);
+    subscription.subscriptionEndDate = subscription.cancelAt;
+    await subscription.save();
+    supplier.subscriptionStatus = 'cancelled';
+    supplier.paymentStatus = 'cancelled';
+    supplier.listingStatus = 'Hidden';
+    await supplier.save();
+
+    await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({ planId: plan._id.toString() })
+      .expect(200);
   });
 
   it('reuses a stored Stripe customer and blocks duplicate active monthly checkout', async () => {
@@ -1508,6 +2001,7 @@ describe('subscription and stripe flow', () => {
       paymentStatus: 'paid',
       isApproved: true,
       listingStatus: 'Approved',
+      featuredHeroPlacement: { enabled: true, activatedAt: new Date('2024-01-01T00:00:00.000Z') },
     });
     const legacySupplier = await createSupplierForUser(legacyUser, {
       categories: [category._id],
@@ -1541,10 +2035,43 @@ describe('subscription and stripe flow', () => {
     expect(expiredCount).toBe(1);
     expect(refreshedExpired.subscriptionStatus).toBe('inactive');
     expect(refreshedExpired.paymentStatus).toBe('unpaid');
+    expect(refreshedExpired.isApproved).toBe(false);
     expect(refreshedExpired.listingStatus).toBe('Hidden');
+    expect(refreshedExpired.featuredHeroPlacement.enabled).toBe(false);
     expect(await Payment.countDocuments({ supplier: expiredSupplier._id })).toBe(1);
     expect(refreshedLegacy.subscriptionStatus).toBe('active');
     expect(refreshedLegacy.paymentStatus).toBe('paid');
+  });
+
+  it('expires elapsed scheduled cancellations during onboarding gating and asks supplier to subscribe again', async () => {
+    const periodEnd = new Date(Date.now() - 60 * 1000);
+    const { user, supplier, subscription } = await createActiveMonthlySubscription({
+      currentPeriodEnd: periodEnd,
+      subscriptionEndDate: periodEnd,
+    });
+    subscription.cancelAtPeriodEnd = true;
+    subscription.cancelAt = periodEnd;
+    subscription.subscriptionEndDate = periodEnd;
+    subscription.nextPaymentDate = null;
+    await subscription.save();
+
+    await request(app)
+      .get('/api/v1/suppliers/onboarding')
+      .set(authHeader(tokenForUser(user)))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.data.supplier.subscriptionStatus).toBe('cancelled');
+        expect(body.data.supplier.paymentStatus).toBe('cancelled');
+        expect(body.data.supplier.isApproved).toBe(false);
+        expect(body.data.supplier.listingStatus).toBe('Hidden');
+        expect(body.data.onboarding.isComplete).toBe(false);
+        expect(body.data.onboarding.nextRoute).toBe('/subscription');
+      });
+
+    const refreshedSubscription = await Subscription.findById(subscription._id);
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+    expect(refreshedSubscription.status).toBe('canceled');
+    expect(refreshedSupplier.onboardingStep).toBe('payment');
   });
 
   it('does not expose a final-period boundary as another next payment date', async () => {
@@ -1668,6 +2195,7 @@ describe('subscription and stripe flow', () => {
     expect(subscriptionRecord.nextPaymentDate).toBeNull();
     expect(refreshedSupplier.subscriptionStatus).toBe('inactive');
     expect(refreshedSupplier.paymentStatus).toBe('unpaid');
+    expect(refreshedSupplier.isApproved).toBe(false);
     expect(refreshedSupplier.listingStatus).toBe('Hidden');
     expect(await Payment.countDocuments({ supplier: supplier._id })).toBe(1);
   });

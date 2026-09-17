@@ -165,7 +165,7 @@ const resolveDashboardOrigin = (req) => {
   }
 
   if (process.env.NODE_ENV !== 'production') {
-    return 'http://localhost:5173';
+    return 'http://localhost:5174';
   }
 
   return '';

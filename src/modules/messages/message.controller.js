@@ -3,6 +3,8 @@ const ChatMessage = require('./message.model');
 const User = require('../users/user.model');
 const Rfq = require('../rfqs/rfq.model');
 const { createNotification } = require('../../utils/notificationService');
+const Supplier = require('../suppliers/supplier.model');
+const { evaluateSupplierEntitlement } = require('../subscriptions/subscriptionEntitlement.service');
 
 // @desc    Get user conversations
 // @route   GET /api/v1/messages/conversations
@@ -75,6 +77,21 @@ exports.sendMessage = async (req, res) => {
   try {
     const { text, isFile, fileName, fileUrl } = req.body;
     let conversationId = req.params.id;
+
+    if (req.user.role === 'supplier') {
+      const supplierProfile = await Supplier.findOne({ user: req.user.id });
+      if (!supplierProfile) {
+        return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+      }
+
+      const entitlement = await evaluateSupplierEntitlement(supplierProfile._id);
+      if (!entitlement.active) {
+        return res.status(403).json({
+          success: false,
+          message: 'An active subscription is required to send supplier messages.',
+        });
+      }
+    }
 
     let conversation = null;
     if (conversationId && conversationId.match(/^[0-9a-fA-F]{24}$/)) {

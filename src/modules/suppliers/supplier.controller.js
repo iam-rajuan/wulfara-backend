@@ -9,7 +9,7 @@ const Payment = require('../subscriptions/payment.model');
 const Subscription = require('../subscriptions/subscription.model');
 const { inferPlanTier } = require('../subscriptions/planTier');
 const { resolveSubscriptionAddons } = require('../subscriptions/subscriptionAddons');
-const { expireElapsedSubscriptions } = require('../subscriptions/subscriptionEntitlement.service');
+const { evaluateSupplierEntitlement, expireElapsedSubscriptions } = require('../subscriptions/subscriptionEntitlement.service');
 const {
   getOnboardingRoute,
   hasCompanyInfo,
@@ -22,6 +22,15 @@ const {
 const ADMIN_SAFE_USER_SELECT = 'name email role status isVerified avatar';
 const DOCUMENT_REVIEW_STATUSES = ['Pending Review', 'Approved', 'Rejected'];
 const PUBLIC_SUPPLIER_USER_SELECT = 'name avatar';
+const PREMIUM_SUPPLIER_FIELDS = new Set([
+  'products',
+  'gallery',
+  'featuredHeroPlacement',
+  'isFeatured',
+]);
+
+const containsPremiumSupplierUpdate = (payload = {}) =>
+  Object.keys(payload || {}).some((field) => PREMIUM_SUPPLIER_FIELDS.has(field));
 
 const getCurrentMonthKey = () => {
   const currentDate = new Date();
@@ -454,6 +463,8 @@ exports.updateSupplierProfile = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized to update this profile' });
     }
 
+    const requestedPremiumUpdate = containsPremiumSupplierUpdate(req.body);
+
     // Don't allow regular users to modify protected lifecycle fields
     if (req.user.role !== 'admin') {
       [
@@ -470,12 +481,23 @@ exports.updateSupplierProfile = async (req, res) => {
         'selectedListingPeriod',
         'stripeCustomerId',
         'featuredHeroPlacement',
+        'isFeatured',
         'user',
       ].forEach((field) => {
         if (field in req.body) {
           delete req.body[field];
         }
       });
+
+      if (requestedPremiumUpdate) {
+        const entitlement = await evaluateSupplierEntitlement(supplier._id);
+        if (!entitlement.active) {
+          return res.status(403).json({
+            success: false,
+            message: 'An active subscription is required to update premium supplier features.',
+          });
+        }
+      }
     }
 
     if ('website' in req.body) {

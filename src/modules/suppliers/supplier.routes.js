@@ -20,9 +20,10 @@ const {
 const router = express.Router();
 
 const { protect, authorize, authorizeAdminPermissions, authorizePermissions, protectOptional } = require('../../middlewares/auth');
+const { requireActiveSupplierEntitlement } = require('../subscriptions/subscriptionEntitlement.service');
 
 router.get('/dashboard', protect, authorize('supplier', 'admin'), getSupplierDashboard);
-router.post('/upload-url', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('suppliers.manage'), getUploadUrl);
+router.post('/upload-url', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('suppliers.manage'), requireActiveSupplierEntitlement, getUploadUrl);
 router.get('/onboarding', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('suppliers.read'), getOnboardingStatus);
 router.put('/onboarding/industry', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('suppliers.manage'), saveOnboardingIndustry);
 router.put('/onboarding/company-info', protect, authorize('supplier', 'admin'), authorizeAdminPermissions('suppliers.manage'), saveOnboardingCompanyInfo);

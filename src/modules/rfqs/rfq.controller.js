@@ -3,6 +3,42 @@ const Supplier = require('../suppliers/supplier.model');
 const sendEmail = require('../../utils/sendEmail');
 const { generatePresignedUrl } = require('../../utils/s3');
 const { createNotification } = require('../../utils/notificationService');
+const { evaluateSupplierEntitlement, expireElapsedSubscriptions } = require('../subscriptions/subscriptionEntitlement.service');
+
+const requireTargetSupplierEntitlement = async (supplierId) => {
+  const entitlement = await evaluateSupplierEntitlement(supplierId);
+  if (!entitlement.supplier) {
+    const error = new Error('Supplier not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (!entitlement.active) {
+    const error = new Error('This supplier is not currently accepting RFQs.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return entitlement.supplier;
+};
+
+const requireLoggedInSupplierEntitlement = async (req) => {
+  const supplierProfile = await Supplier.findOne({ user: req.user.id });
+  if (!supplierProfile) {
+    const error = new Error('You do not have a supplier profile');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const entitlement = await evaluateSupplierEntitlement(supplierProfile._id);
+  if (!entitlement.active) {
+    const error = new Error('An active subscription is required to use supplier RFQ features.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  return entitlement.supplier;
+};
 
 // @desc    Submit an RFQ to a supplier
 // @route   POST /api/v1/rfqs
@@ -11,18 +47,7 @@ exports.createRfq = async (req, res) => {
   try {
     const { supplierId } = req.body;
 
-    // Check if supplier exists
-    const supplier = await Supplier.findById(supplierId);
-    if (!supplier) {
-      return res.status(404).json({ success: false, message: 'Supplier not found' });
-    }
-
-    // Temporarily disable approval check so you can test RFQ easily!
-    /*
-    if (!supplier.isApproved) {
-      return res.status(400).json({ success: false, message: 'Cannot send RFQ to a pending supplier profile' });
-    }
-    */
+    const supplier = await requireTargetSupplierEntitlement(supplierId);
 
     // If user is logged in, automatically attach their user ID
     if (req.user) {
@@ -60,7 +85,7 @@ exports.createRfq = async (req, res) => {
 
     res.status(201).json({ success: true, data: rfq });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.statusCode || 500).json({ success: false, message: error.message });
   }
 };
 
@@ -69,12 +94,7 @@ exports.createRfq = async (req, res) => {
 // @access  Private (Supplier only)
 exports.getSupplierRfqs = async (req, res) => {
   try {
-    // Find the supplier profile for the logged in user
-    const supplierProfile = await Supplier.findOne({ user: req.user.id });
-    
-    if (!supplierProfile) {
-      return res.status(404).json({ success: false, message: 'You do not have a supplier profile' });
-    }
+    const supplierProfile = await requireLoggedInSupplierEntitlement(req);
 
     const rfqs = await Rfq.find({ supplier: supplierProfile._id })
       .populate('buyerUser', 'name email role avatar')
@@ -82,7 +102,7 @@ exports.getSupplierRfqs = async (req, res) => {
 
     res.status(200).json({ success: true, count: rfqs.length, data: rfqs });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.statusCode || 500).json({ success: false, message: error.message });
   }
 };
 
@@ -106,6 +126,13 @@ exports.updateRfqStatus = async (req, res) => {
       }
       if (rfq.supplier.toString() !== supplierProfile._id.toString()) {
         return res.status(403).json({ success: false, message: 'Not authorized to update this RFQ' });
+      }
+      const entitlement = await evaluateSupplierEntitlement(supplierProfile._id);
+      if (!entitlement.active) {
+        return res.status(403).json({
+          success: false,
+          message: 'An active subscription is required to update RFQs.',
+        });
       }
     }
 
@@ -193,6 +220,23 @@ exports.addMessageToRfq = async (req, res) => {
       return res.status(404).json({ success: false, message: 'RFQ not found' });
     }
 
+    if (req.user.role === 'supplier') {
+      const supplierProfile = await Supplier.findOne({ user: req.user.id });
+      if (!supplierProfile) {
+        return res.status(404).json({ success: false, message: 'You do not have a supplier profile' });
+      }
+      if (rfq.supplier.toString() !== supplierProfile._id.toString()) {
+        return res.status(403).json({ success: false, message: 'Not authorized to reply to this RFQ' });
+      }
+      const entitlement = await evaluateSupplierEntitlement(supplierProfile._id);
+      if (!entitlement.active) {
+        return res.status(403).json({
+          success: false,
+          message: 'An active subscription is required to reply to RFQs.',
+        });
+      }
+    }
+
     const message = await Message.create({
       rfq: rfq._id,
       sender: req.user.id,
@@ -263,6 +307,12 @@ exports.getGlobalRfqs = async (req, res) => {
 // @access  Private
 exports.getUploadUrl = async (req, res) => {
   try {
+    if (req.user.role === 'supplier') {
+      await requireLoggedInSupplierEntitlement(req);
+    } else {
+      await expireElapsedSubscriptions();
+    }
+
     const { contentType } = req.body;
     if (!contentType) {
       return res.status(400).json({ success: false, message: 'Content type is required' });
@@ -273,7 +323,7 @@ exports.getUploadUrl = async (req, res) => {
     
     res.status(200).json({ success: true, data: urlData });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(error.statusCode || 500).json({ success: false, message: error.message });
   }
 };
 

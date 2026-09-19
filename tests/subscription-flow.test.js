@@ -18,6 +18,7 @@ const {
 } = require('../src/modules/subscriptions/subscriptionAddons');
 const { ensureMonthlyPriceForPlan } = require('../src/modules/subscriptions/stripeBilling.service');
 const { expireElapsedSubscriptions } = require('../src/modules/subscriptions/subscriptionEntitlement.service');
+const Rfq = require('../src/modules/rfqs/rfq.model');
 
 describe('subscription and stripe flow', () => {
   const createCheckoutReadySupplier = async () => {
@@ -2198,5 +2199,104 @@ describe('subscription and stripe flow', () => {
     expect(refreshedSupplier.isApproved).toBe(false);
     expect(refreshedSupplier.listingStatus).toBe('Hidden');
     expect(await Payment.countDocuments({ supplier: supplier._id })).toBe(1);
+  });
+
+  it('blocks premium supplier actions after a canceled subscription reaches period end', async () => {
+    const periodEnd = new Date(Date.now() - 60 * 1000);
+    const { user, supplier, subscription } = await createActiveMonthlySubscription({
+      currentPeriodEnd: periodEnd,
+      subscriptionEndDate: periodEnd,
+    });
+    subscription.cancelAtPeriodEnd = true;
+    subscription.cancelAt = periodEnd;
+    subscription.nextPaymentDate = null;
+    await subscription.save();
+
+    const rfq = await Rfq.create({
+      supplier: supplier._id,
+      buyerName: 'Buyer Person',
+      buyerEmail: uniqueEmail('buyer-rfq'),
+      subject: 'Need parts',
+      details: 'Please quote this order.',
+      quantity: 12,
+    });
+
+    const token = tokenForUser(user);
+
+    await request(app)
+      .get('/api/v1/suppliers/dashboard')
+      .set(authHeader(token))
+      .expect(200);
+
+    await request(app)
+      .get('/api/v1/rfqs/supplier')
+      .set(authHeader(token))
+      .expect(403);
+
+    await request(app)
+      .put(`/api/v1/rfqs/${rfq._id}/status`)
+      .set(authHeader(token))
+      .send({ status: 'reviewed' })
+      .expect(403);
+
+    await request(app)
+      .post(`/api/v1/rfqs/${rfq._id}/messages`)
+      .set(authHeader(token))
+      .send({ text: 'Supplier reply' })
+      .expect(403);
+
+    await request(app)
+      .post('/api/v1/rfqs/upload-url')
+      .set(authHeader(token))
+      .send({ contentType: 'application/pdf' })
+      .expect(403);
+
+    await request(app)
+      .post('/api/v1/suppliers/upload-url')
+      .set(authHeader(token))
+      .send({ folder: 'galleries', contentType: 'image/png' })
+      .expect(403);
+
+    await request(app)
+      .put(`/api/v1/suppliers/${supplier._id}`)
+      .set(authHeader(token))
+      .send({ products: [{ title: 'Premium Product' }] })
+      .expect(403);
+
+    await request(app)
+      .put(`/api/v1/suppliers/${supplier._id}`)
+      .set(authHeader(token))
+      .send({ description: 'Allowed basic account recovery edit.' })
+      .expect(200);
+
+    const refreshedSupplier = await Supplier.findById(supplier._id);
+    expect(refreshedSupplier.subscriptionStatus).toBe('cancelled');
+    expect(refreshedSupplier.paymentStatus).toBe('cancelled');
+    expect(refreshedSupplier.isApproved).toBe(false);
+    expect(refreshedSupplier.listingStatus).toBe('Hidden');
+  });
+
+  it('does not allow buyers to send RFQs to suppliers without active paid entitlement', async () => {
+    const periodEnd = new Date(Date.now() - 60 * 1000);
+    const { supplier, subscription } = await createActiveMonthlySubscription({
+      currentPeriodEnd: periodEnd,
+      subscriptionEndDate: periodEnd,
+    });
+    subscription.cancelAtPeriodEnd = true;
+    subscription.cancelAt = periodEnd;
+    subscription.nextPaymentDate = null;
+    await subscription.save();
+
+    await request(app)
+      .post('/api/v1/rfqs')
+      .send({
+        supplierId: supplier._id,
+        buyerName: 'Buyer Person',
+        buyerEmail: uniqueEmail('blocked-buyer'),
+        subject: 'Need quote',
+        details: 'Quote request should not reach expired supplier.',
+        quantity: 5,
+      })
+      .expect(403);
   });
 });

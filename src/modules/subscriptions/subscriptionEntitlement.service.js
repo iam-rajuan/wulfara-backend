@@ -56,6 +56,60 @@ const expireElapsedSubscriptions = async ({ supplierId } = {}) => {
   return subscriptions.length;
 };
 
+const isSupplierEntitled = (supplier) =>
+  Boolean(
+    supplier &&
+      supplier.subscriptionStatus === 'active' &&
+      supplier.paymentStatus === 'paid' &&
+      supplier.isApproved === true &&
+      supplier.listingStatus === 'Approved'
+  );
+
+const evaluateSupplierEntitlement = async (supplierOrId) => {
+  const supplierId = supplierOrId?._id || supplierOrId;
+  if (!supplierId) {
+    return { active: false, supplier: null };
+  }
+
+  await expireElapsedSubscriptions({ supplierId });
+  const supplier = await Supplier.findById(supplierId);
+
+  return {
+    active: isSupplierEntitled(supplier),
+    supplier,
+  };
+};
+
+const requireActiveSupplierEntitlement = async (req, res, next) => {
+  try {
+    if (req.user?.role === 'admin') {
+      return next();
+    }
+
+    if (req.user?.role !== 'supplier') {
+      return next();
+    }
+
+    const supplierProfile = await Supplier.findOne({ user: req.user.id });
+    if (!supplierProfile) {
+      return res.status(404).json({ success: false, message: 'Supplier profile not found' });
+    }
+
+    const entitlement = await evaluateSupplierEntitlement(supplierProfile._id);
+    if (!entitlement.active) {
+      return res.status(403).json({
+        success: false,
+        message: 'An active subscription is required to use this supplier feature.',
+      });
+    }
+
+    req.supplierProfile = entitlement.supplier;
+    return next();
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const startSubscriptionExpirationScheduler = ({
   intervalMs = Number(process.env.SUBSCRIPTION_EXPIRATION_INTERVAL_MS || 15 * 60 * 1000),
 } = {}) => {
@@ -87,8 +141,11 @@ const stopSubscriptionExpirationScheduler = () => {
 };
 
 module.exports = {
+  evaluateSupplierEntitlement,
   expireElapsedSubscriptions,
   expireSupplierForEndedSubscription,
+  isSupplierEntitled,
+  requireActiveSupplierEntitlement,
   startSubscriptionExpirationScheduler,
   stopSubscriptionExpirationScheduler,
 };

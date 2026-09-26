@@ -32,13 +32,25 @@ jest.mock('stripe', () => {
     subscription: 'sub_test_default',
     metadata: {},
   });
+  const expireSession = jest.fn().mockResolvedValue({
+    id: 'cs_test_default',
+    status: 'expired',
+  });
   const retrieveInvoice = jest.fn();
   const constructEvent = jest.fn();
   const createProduct = jest.fn().mockResolvedValue({
     id: 'prod_test_default',
   });
+  const retrieveProduct = jest.fn().mockResolvedValue({
+    id: 'prod_test_default',
+    active: true,
+  });
   const createPrice = jest.fn().mockResolvedValue({
     id: 'price_test_default',
+  });
+  const retrievePrice = jest.fn().mockResolvedValue({
+    id: 'price_test_default',
+    active: true,
   });
   const retrieveSubscription = jest.fn().mockResolvedValue({
     id: 'sub_test_default',
@@ -68,6 +80,7 @@ jest.mock('stripe', () => {
       sessions: {
         create: createSession,
         retrieve: retrieveSession,
+        expire: expireSession,
       },
     },
     invoices: {
@@ -75,9 +88,11 @@ jest.mock('stripe', () => {
     },
     products: {
       create: createProduct,
+      retrieve: retrieveProduct,
     },
     prices: {
       create: createPrice,
+      retrieve: retrievePrice,
     },
     subscriptions: {
       retrieve: retrieveSubscription,
@@ -91,7 +106,10 @@ jest.mock('stripe', () => {
   factory.__mock = {
     createPrice,
     createProduct,
+    retrievePrice,
+    retrieveProduct,
     createSession,
+    expireSession,
     retrieveSession,
     retrieveInvoice,
     constructEvent,
@@ -145,14 +163,29 @@ afterEach(async () => {
     subscription: 'sub_test_default',
     metadata: {},
   });
+  stripeFactory.__mock.expireSession.mockReset();
+  stripeFactory.__mock.expireSession.mockResolvedValue({
+    id: 'cs_test_default',
+    status: 'expired',
+  });
   stripeFactory.__mock.retrieveInvoice.mockReset();
   stripeFactory.__mock.createProduct.mockReset();
   stripeFactory.__mock.createProduct.mockResolvedValue({
     id: 'prod_test_default',
   });
+  stripeFactory.__mock.retrieveProduct.mockReset();
+  stripeFactory.__mock.retrieveProduct.mockResolvedValue({
+    id: 'prod_test_default',
+    active: true,
+  });
   stripeFactory.__mock.createPrice.mockReset();
   stripeFactory.__mock.createPrice.mockResolvedValue({
     id: 'price_test_default',
+  });
+  stripeFactory.__mock.retrievePrice.mockReset();
+  stripeFactory.__mock.retrievePrice.mockResolvedValue({
+    id: 'price_test_default',
+    active: true,
   });
   stripeFactory.__mock.retrieveSubscription.mockReset();
   stripeFactory.__mock.retrieveSubscription.mockResolvedValue({

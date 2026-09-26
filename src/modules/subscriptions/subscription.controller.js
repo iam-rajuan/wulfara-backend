@@ -535,6 +535,52 @@ const syncSubscriptionDatesFromStripe = (subscriptionRecord, stripeSubscription 
     getStripeObjectId(stripeSubscription.schedule) || subscriptionRecord.stripeSubscriptionScheduleId;
 };
 
+const expireOpenCheckoutSession = async (sessionId) => {
+  if (!sessionId || !stripe?.checkout?.sessions?.retrieve) {
+    return null;
+  }
+
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
+  if (session?.status === 'open' && stripe?.checkout?.sessions?.expire) {
+    return stripe.checkout.sessions.expire(sessionId);
+  }
+
+  return session;
+};
+
+const releaseAbandonedMonthlyCheckoutReservations = async (supplierId) => {
+  const reservations = await Subscription.find({
+    supplier: supplierId,
+    billingCycleType: 'monthly',
+    status: 'pending_checkout',
+    stripeSubscriptionId: '',
+    $or: [
+      { subscriptionEndDate: null },
+      { subscriptionEndDate: { $gt: new Date() } },
+    ],
+  });
+
+  for (const reservation of reservations) {
+    let session = null;
+    try {
+      session = await expireOpenCheckoutSession(reservation.stripeCheckoutSessionId);
+    } catch (error) {
+      logStripeFlow('monthly-checkout', 'Unable to inspect pending checkout reservation', {
+        subscriptionId: reservation._id.toString(),
+        sessionId: reservation.stripeCheckoutSessionId,
+        message: error.message,
+      });
+    }
+
+    if (!session || ['open', 'expired'].includes(session.status)) {
+      reservation.status = 'incomplete_expired';
+      reservation.nextPaymentDate = null;
+      reservation.lastPaymentFailureReason = 'Checkout session was abandoned before a new checkout attempt.';
+      await reservation.save();
+    }
+  }
+};
+
 const createRecurringCheckoutSession = async ({
   req,
   supplierProfile,
@@ -545,6 +591,8 @@ const createRecurringCheckoutSession = async ({
   basePrice,
   addonPrice,
 }) => {
+  await releaseAbandonedMonthlyCheckoutReservations(supplierProfile._id);
+
   const blockingSubscription = await Subscription.findOne({
     supplier: supplierProfile._id,
     billingCycleType: 'monthly',

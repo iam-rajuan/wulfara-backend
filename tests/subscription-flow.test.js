@@ -1824,6 +1824,62 @@ describe('subscription and stripe flow', () => {
     expect(stripeFactory.__mock.createPrice).toHaveBeenCalledTimes(2);
   });
 
+  it('replaces stale cached Stripe Price and Product ids for the current Stripe key', async () => {
+    const stripe = stripeFactory();
+    const monthlyPlan = await createPricingPlan({
+      name: 'Stale Price Cache Plan',
+      slug: `stale-price-cache-${Date.now()}`,
+      price: 753,
+      billingCycle: 'Monthly',
+      stripeProductId: 'prod_missing_current_key',
+      stripePrices: [{
+        billingCycleType: 'monthly',
+        currency: 'usd',
+        unitAmount: 75300,
+        interval: 'month',
+        intervalCount: 1,
+        durationMonths: 48,
+        listingDiscountPercent: 0,
+        stripePriceId: 'price_missing_current_key',
+        isActive: true,
+      }],
+    });
+
+    stripeFactory.__mock.retrievePrice.mockRejectedValueOnce(
+      Object.assign(new Error("No such price: 'price_missing_current_key'"), {
+        code: 'resource_missing',
+        type: 'StripeInvalidRequestError',
+      })
+    );
+    stripeFactory.__mock.retrieveProduct.mockRejectedValueOnce(
+      Object.assign(new Error("No such product: 'prod_missing_current_key'"), {
+        code: 'resource_missing',
+        type: 'StripeInvalidRequestError',
+      })
+    );
+    stripeFactory.__mock.createProduct.mockResolvedValueOnce({ id: 'prod_test_replacement' });
+    stripeFactory.__mock.createPrice.mockResolvedValueOnce({ id: 'price_test_replacement' });
+
+    const replacementPriceId = await ensureMonthlyPriceForPlan(stripe, monthlyPlan, {
+      amount: 753,
+      durationMonths: 48,
+      listingDiscountPercent: 0,
+    });
+
+    const reloadedPlan = await monthlyPlan.constructor.findById(monthlyPlan._id);
+    const stalePrice = reloadedPlan.stripePrices.find(
+      (price) => price.stripePriceId === 'price_missing_current_key'
+    );
+    const replacementPrice = reloadedPlan.stripePrices.find(
+      (price) => price.stripePriceId === 'price_test_replacement'
+    );
+
+    expect(replacementPriceId).toBe('price_test_replacement');
+    expect(reloadedPlan.stripeProductId).toBe('prod_test_replacement');
+    expect(stalePrice.isActive).toBe(false);
+    expect(replacementPrice.isActive).toBe(true);
+  });
+
   it('expires ended local subscriptions and removes public listing entitlement without touching legacy suppliers', async () => {
     const category = await createCategory({ name: `Expiry Category ${Date.now()}` });
     const activeUser = await createUser({ role: 'supplier', email: uniqueEmail('expiry-active') });

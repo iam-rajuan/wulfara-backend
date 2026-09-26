@@ -15,9 +15,51 @@ const findCachedMonthlyPrice = (plan, { unitAmount, currency, durationMonths, li
     Number(price.listingDiscountPercent || 0) === Number(listingDiscountPercent || 0)
   );
 
+const isMissingStripeResourceError = (error) =>
+  error?.code === 'resource_missing' ||
+  error?.type === 'StripeInvalidRequestError' ||
+  /No such (price|product)/i.test(error?.message || '');
+
+const deactivateCachedPrice = (plan, stripePriceId) => {
+  plan.stripePrices = (plan.stripePrices || []).map((price) => {
+    if (price?.stripePriceId !== stripePriceId) {
+      return price;
+    }
+
+    price.isActive = false;
+    return price;
+  });
+
+  if (plan.stripeMonthlyPriceId === stripePriceId) {
+    plan.stripeMonthlyPriceId = '';
+    plan.stripeMonthlyUnitAmount = 0;
+  }
+};
+
+const retrieveStripeResource = async (retrieveFn, id) => {
+  if (!retrieveFn || !id) {
+    return null;
+  }
+
+  try {
+    return await retrieveFn(id);
+  } catch (error) {
+    if (isMissingStripeResourceError(error)) {
+      return null;
+    }
+
+    throw error;
+  }
+};
+
 const ensureStripeProductForPlan = async (stripe, plan) => {
   if (plan.stripeProductId) {
-    return plan.stripeProductId;
+    const product = await retrieveStripeResource(stripe.products?.retrieve?.bind(stripe.products), plan.stripeProductId);
+    if (product) {
+      return plan.stripeProductId;
+    }
+
+    plan.stripeProductId = '';
   }
 
   const product = await stripe.products.create({
@@ -49,7 +91,12 @@ const ensureMonthlyPriceForPlan = async (
   });
 
   if (cachedPrice) {
-    return cachedPrice.stripePriceId;
+    const price = await retrieveStripeResource(stripe.prices?.retrieve?.bind(stripe.prices), cachedPrice.stripePriceId);
+    if (price) {
+      return cachedPrice.stripePriceId;
+    }
+
+    deactivateCachedPrice(plan, cachedPrice.stripePriceId);
   }
 
   const stripeProductId = await ensureStripeProductForPlan(stripe, plan);

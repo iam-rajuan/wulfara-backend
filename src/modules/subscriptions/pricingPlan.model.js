@@ -42,6 +42,12 @@ const listingPeriodSchema = new mongoose.Schema(
 
 const stripePriceCacheSchema = new mongoose.Schema(
   {
+    stripeEnvironment: {
+      type: String,
+      enum: ['test', 'live'],
+      default: 'test',
+      index: true,
+    },
     billingCycleType: {
       type: String,
       enum: ['monthly'],
@@ -77,6 +83,29 @@ const stripePriceCacheSchema = new mongoose.Schema(
       max: 100,
     },
     stripePriceId: {
+      type: String,
+      required: true,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  { _id: false }
+);
+
+const stripeProductCacheSchema = new mongoose.Schema(
+  {
+    stripeEnvironment: {
+      type: String,
+      enum: ['test', 'live'],
+      required: true,
+    },
+    stripeProductId: {
       type: String,
       required: true,
     },
@@ -151,6 +180,10 @@ const pricingPlanSchema = new mongoose.Schema({
   stripeProductId: {
     type: String,
     default: '',
+  },
+  stripeProducts: {
+    type: [stripeProductCacheSchema],
+    default: [],
   },
   stripeMonthlyPriceId: {
     type: String,

@@ -5,10 +5,13 @@ const { stripeMode } = getStripeConfig();
 const STRIPE_ENVIRONMENT = stripeMode;
 const STRIPE_SOURCE = 'wulfara';
 
+const matchesStripeEnvironment = (value) => !value || value === STRIPE_ENVIRONMENT;
+
 const findCachedMonthlyPrice = (plan, { unitAmount, currency, durationMonths, listingDiscountPercent }) =>
   (plan.stripePrices || []).find((price) =>
     price?.isActive !== false &&
     price?.stripePriceId &&
+    matchesStripeEnvironment(price.stripeEnvironment) &&
     price.billingCycleType === 'monthly' &&
     price.currency === currency &&
     Number(price.unitAmount) === Number(unitAmount) &&
@@ -38,6 +41,48 @@ const deactivateCachedPrice = (plan, stripePriceId) => {
   }
 };
 
+const findCachedProduct = (plan) =>
+  (plan.stripeProducts || []).find((product) =>
+    product?.isActive !== false &&
+    product?.stripeProductId &&
+    product.stripeEnvironment === STRIPE_ENVIRONMENT
+  );
+
+const rememberStripeProduct = (plan, stripeProductId) => {
+  const products = plan.stripeProducts || [];
+  const existingProduct = products.find((product) => product.stripeEnvironment === STRIPE_ENVIRONMENT);
+
+  if (existingProduct) {
+    existingProduct.stripeProductId = stripeProductId;
+    existingProduct.isActive = true;
+  } else {
+    products.push({
+      stripeEnvironment: STRIPE_ENVIRONMENT,
+      stripeProductId,
+      isActive: true,
+      createdAt: new Date(),
+    });
+  }
+
+  plan.stripeProducts = products;
+  plan.stripeProductId = stripeProductId;
+};
+
+const deactivateCachedProduct = (plan, stripeProductId) => {
+  plan.stripeProducts = (plan.stripeProducts || []).map((product) => {
+    if (product?.stripeProductId !== stripeProductId) {
+      return product;
+    }
+
+    product.isActive = false;
+    return product;
+  });
+
+  if (plan.stripeProductId === stripeProductId) {
+    plan.stripeProductId = '';
+  }
+};
+
 const retrieveStripeResource = async (retrieveFn, id) => {
   if (!retrieveFn || !id) {
     return null;
@@ -55,13 +100,26 @@ const retrieveStripeResource = async (retrieveFn, id) => {
 };
 
 const ensureStripeProductForPlan = async (stripe, plan) => {
+  const cachedProduct = findCachedProduct(plan);
+
+  if (cachedProduct?.stripeProductId) {
+    const product = await retrieveStripeResource(stripe.products?.retrieve?.bind(stripe.products), cachedProduct.stripeProductId);
+    if (product) {
+      plan.stripeProductId = cachedProduct.stripeProductId;
+      return cachedProduct.stripeProductId;
+    }
+
+    deactivateCachedProduct(plan, cachedProduct.stripeProductId);
+  }
+
   if (plan.stripeProductId) {
     const product = await retrieveStripeResource(stripe.products?.retrieve?.bind(stripe.products), plan.stripeProductId);
     if (product) {
+      rememberStripeProduct(plan, plan.stripeProductId);
       return plan.stripeProductId;
     }
 
-    plan.stripeProductId = '';
+    deactivateCachedProduct(plan, plan.stripeProductId);
   }
 
   const product = await stripe.products.create({
@@ -74,7 +132,7 @@ const ensureStripeProductForPlan = async (stripe, plan) => {
     },
   });
 
-  plan.stripeProductId = product.id;
+  rememberStripeProduct(plan, product.id);
   return product.id;
 };
 
@@ -124,6 +182,7 @@ const ensureMonthlyPriceForPlan = async (
   plan.stripePrices = [
     ...(plan.stripePrices || []),
     {
+      stripeEnvironment: STRIPE_ENVIRONMENT,
       billingCycleType: 'monthly',
       currency: normalizedCurrency,
       unitAmount,

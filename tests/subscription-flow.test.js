@@ -1941,6 +1941,66 @@ describe('subscription and stripe flow', () => {
     expect(replacementPrice.isActive).toBe(true);
   });
 
+  it('keeps separate Stripe Product and Price caches for test and live modes', async () => {
+    const stripe = stripeFactory();
+    const monthlyPlan = await createPricingPlan({
+      name: 'Dual Mode Cache Plan',
+      slug: `dual-mode-cache-${Date.now()}`,
+      price: 499,
+      billingCycle: 'Monthly',
+      stripeProducts: [{
+        stripeEnvironment: 'live',
+        stripeProductId: 'prod_live_existing',
+        isActive: true,
+      }],
+      stripePrices: [{
+        stripeEnvironment: 'live',
+        billingCycleType: 'monthly',
+        currency: 'usd',
+        unitAmount: 49900,
+        interval: 'month',
+        intervalCount: 1,
+        durationMonths: 12,
+        listingDiscountPercent: 0,
+        stripePriceId: 'price_live_existing',
+        isActive: true,
+      }],
+    });
+
+    stripeFactory.__mock.createProduct.mockResolvedValueOnce({ id: 'prod_test_dual_mode' });
+    stripeFactory.__mock.createPrice.mockResolvedValueOnce({ id: 'price_test_dual_mode' });
+
+    const testPriceId = await ensureMonthlyPriceForPlan(stripe, monthlyPlan, {
+      amount: 499,
+      durationMonths: 12,
+      listingDiscountPercent: 0,
+    });
+
+    const reloadedPlan = await monthlyPlan.constructor.findById(monthlyPlan._id);
+    const liveProduct = reloadedPlan.stripeProducts.find(
+      (product) => product.stripeEnvironment === 'live'
+    );
+    const testProduct = reloadedPlan.stripeProducts.find(
+      (product) => product.stripeEnvironment === 'test'
+    );
+    const livePrice = reloadedPlan.stripePrices.find(
+      (price) => price.stripeEnvironment === 'live'
+    );
+    const testPrice = reloadedPlan.stripePrices.find(
+      (price) => price.stripeEnvironment === 'test'
+    );
+
+    expect(testPriceId).toBe('price_test_dual_mode');
+    expect(liveProduct.stripeProductId).toBe('prod_live_existing');
+    expect(liveProduct.isActive).toBe(true);
+    expect(testProduct.stripeProductId).toBe('prod_test_dual_mode');
+    expect(testProduct.isActive).toBe(true);
+    expect(livePrice.stripePriceId).toBe('price_live_existing');
+    expect(livePrice.isActive).toBe(true);
+    expect(testPrice.stripePriceId).toBe('price_test_dual_mode');
+    expect(testPrice.isActive).toBe(true);
+  });
+
   it('expires ended local subscriptions and removes public listing entitlement without touching legacy suppliers', async () => {
     const category = await createCategory({ name: `Expiry Category ${Date.now()}` });
     const activeUser = await createUser({ role: 'supplier', email: uniqueEmail('expiry-active') });

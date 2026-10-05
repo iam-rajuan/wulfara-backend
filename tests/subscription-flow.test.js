@@ -1461,6 +1461,67 @@ describe('subscription and stripe flow', () => {
     expect(payments[0].paymentType).toBe('initial_subscription');
   });
 
+  it('rejects checkout-status reconciliation when the Stripe session mode does not match backend mode', async () => {
+    const { user, supplier } = await createCheckoutReadySupplier();
+    const monthlyPlan = await createPricingPlan({
+      name: 'Mode Mismatch Plan',
+      slug: `mode-mismatch-${Date.now()}`,
+      price: 10,
+      billingCycle: 'Monthly',
+      listingPeriods: [{ durationMonths: 2, isActive: true }],
+    });
+
+    await request(app)
+      .post('/api/v1/subscriptions/checkout-session')
+      .set(authHeader(tokenForUser(user)))
+      .send({ planId: monthlyPlan._id.toString() })
+      .expect(200);
+
+    const metadata = stripeFactory.__mock.createSession.mock.calls.at(-1)[0].metadata;
+    stripeFactory.__mock.retrieveSession.mockResolvedValue({
+      id: 'cs_live_mode_mismatch',
+      livemode: true,
+      status: 'complete',
+      payment_status: 'paid',
+      mode: 'subscription',
+      client_reference_id: supplier._id.toString(),
+      customer: 'cus_live_mode_mismatch',
+      metadata,
+      subscription: 'sub_live_mode_mismatch',
+    });
+
+    await request(app)
+      .get('/api/v1/subscriptions/checkout-status?session_id=cs_live_mode_mismatch')
+      .set(authHeader(tokenForUser(user)))
+      .expect(400)
+      .expect(({ body }) => {
+        expect(body.status).toBe('invalid_session');
+        expect(body.message).toContain('configured for test mode');
+      });
+  });
+
+  it('ignores Stripe webhook events whose mode does not match backend mode', async () => {
+    await request(app)
+      .post('/api/v1/subscriptions/webhook')
+      .set('Content-Type', 'application/json')
+      .send(JSON.stringify({
+        type: 'invoice.paid',
+        livemode: true,
+        data: {
+          object: {
+            id: 'in_live_mode_mismatch',
+            subscription: 'sub_live_mode_mismatch',
+          },
+        },
+      }))
+      .expect(200)
+      .expect(({ body }) => {
+        expect(body.ignored).toBe(true);
+        expect(body.reason).toBe('stripe_mode_mismatch');
+        expect(body.message).toContain('configured for test mode');
+      });
+  });
+
   it('reconciles the latest paid monthly checkout when the session id is no longer in the URL', async () => {
     const { user, supplier } = await createCheckoutReadySupplier();
     const monthlyPlan = await createPricingPlan({

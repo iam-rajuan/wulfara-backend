@@ -3,7 +3,7 @@ const Payment = require('./payment.model');
 const Subscription = require('./subscription.model');
 const { getStripeConfig } = require('./stripeConfig');
 
-const { isProduction, stripeSecretKey, stripeWebhookSecret } = getStripeConfig();
+const { isProduction, stripeMode, stripeSecretKey, stripeWebhookSecret } = getStripeConfig();
 const stripe = require('stripe')(stripeSecretKey || 'sk_test_dummy');
 const PricingPlan = require('./pricingPlan.model');
 const { inferPlanTier } = require('./planTier');
@@ -69,6 +69,11 @@ const getInvoiceMetadata = (invoice = {}) => ({
 const logStripeFlow = (scope, message, details = {}) => {
   console.info(`[${scope}] ${message}`, details);
 };
+
+const isStripeModeAllowed = (livemode) => Boolean(livemode) === (stripeMode === 'live');
+
+const buildStripeModeMismatchMessage = (resource = 'Stripe resource') =>
+  `${resource} belongs to ${stripeMode === 'live' ? 'test' : 'live'} mode, but this backend is configured for ${stripeMode} mode.`;
 
 const hasNoFurtherAutomaticPayments = (subscriptionRecord, periodEnd) =>
   Boolean(
@@ -1169,8 +1174,8 @@ const scheduleStripeCancellationAtPeriodEnd = async ({ subscriptionRecord, suppl
     throw sanitizeStripeCancellationError(error);
   }
 
-  if (stripeSubscription?.livemode) {
-    const error = new Error('Live Stripe subscriptions are not accepted in this environment.');
+  if (stripeSubscription && !isStripeModeAllowed(stripeSubscription.livemode)) {
+    const error = new Error(buildStripeModeMismatchMessage('Stripe subscription'));
     error.statusCode = 400;
     throw error;
   }
@@ -2024,11 +2029,11 @@ exports.getCheckoutStatus = async (req, res) => {
       expand: ['subscription', 'subscription.latest_invoice', 'payment_intent'],
     });
 
-    if (session.livemode) {
+    if (!isStripeModeAllowed(session.livemode)) {
       return res.status(400).json({
         success: false,
         status: 'invalid_session',
-        message: 'Live Stripe sessions are not accepted in this environment.',
+        message: buildStripeModeMismatchMessage('Checkout session'),
       });
     }
 
@@ -2190,8 +2195,13 @@ exports.stripeWebhook = async (req, res) => {
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
-  if (event.livemode) {
-    return res.status(200).json({ received: true, ignored: true, reason: 'live_mode_not_allowed' });
+  if (!isStripeModeAllowed(event.livemode)) {
+    return res.status(200).json({
+      received: true,
+      ignored: true,
+      reason: 'stripe_mode_mismatch',
+      message: buildStripeModeMismatchMessage('Stripe event'),
+    });
   }
 
   try {

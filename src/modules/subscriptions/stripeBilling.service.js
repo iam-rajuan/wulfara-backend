@@ -1,6 +1,8 @@
 const { toCents } = require('./billingUtils');
+const { getStripeConfig } = require('./stripeConfig');
 
-const STRIPE_ENVIRONMENT = 'test';
+const { stripeMode } = getStripeConfig();
+const STRIPE_ENVIRONMENT = stripeMode;
 const STRIPE_SOURCE = 'wulfara';
 
 const findCachedMonthlyPrice = (plan, { unitAmount, currency, durationMonths, listingDiscountPercent }) =>
